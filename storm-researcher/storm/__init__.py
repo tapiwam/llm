@@ -17,6 +17,7 @@ from . import prompts
 # ==========================================
 
 MAX_INTERVIEW_QUESTIONS = 7
+TAGS_TO_EXTRACT = [ "p", "h1", "h2", "h3"]
 
 wikipedia_retriever = get_wikipedia_retriever()
 
@@ -43,7 +44,7 @@ consoleHandler.setFormatter(logFormatter)
 logger.addHandler(consoleHandler)
 
 # Colsole level to WARN ONLY
-consoleHandler.setLevel(logging.WARN)
+consoleHandler.setLevel(logging.INFO)
 
 
 # Add file logger

@@ -1,6 +1,7 @@
 import re
 from typing_extensions import TypedDict
 from typing import Annotated, Sequence, List, Optional
+from itertools import chain
 
 from langchain_core.messages import AnyMessage
 

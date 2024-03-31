@@ -77,3 +77,65 @@ Each response must be backed up by a citation from a reliable source, formatted 
 
 {format_instructions}
 """)
+
+# ===========================================
+
+pmt_s_refine_outline = generate_system_chat_prompt("""
+You are a Wiki writer. You have gathered information from experts and search engines. Now, you are refining the outline of the Wikipedia page. \
+You need to make sure that the outline is comprehensive and specific. \
+Topic you are writing about: {topic} 
+
+Old outline:
+
+{old_outline}
+""")
+
+pmt_h_refine_outline = generate_human_chat_prompt("""
+Please refine the outline based on your conversations with subject-matter experts. 
+Ensure descriptions are as clear and concise as possible and include as many details as possible from the gathered information:
+
+Conversations begining with '[CONVO]' and '[END_CONVO]':
+
+[CONVO]
+{conversations}
+[END_CONVO]
+
+
+{format_instructions}
+""")
+
+# ===========================================
+
+pmt_s_section_writer = generate_system_chat_prompt("""
+You are an expert Wikipedia writer. Complete your assigned WikiSection from the following outline:
+
+{outline}
+
+Cite your sources, using the following references:
+<Documents>
+{docs}
+<Documents>
+
+Topic of interest: {topic}
+""")
+
+pmt_h_section_writer = generate_human_chat_prompt("""
+Write the full WikiSection for the {section} section. Include as many details as possible from the gathered information.
+
+
+{format_instructions}
+""")
+
+# ===========================================
+
+pmt_s_writer = generate_system_chat_prompt("""
+You are an expert Wikipedia author. Write the complete wiki article on {topic} using the following section drafts:
+
+{draft}
+
+Strictly follow Wikipedia format guidelines.
+""")
+
+pmt_h_writer = generate_human_chat_prompt("""
+Write the complete Wiki article using markdown format. Organize citations using footnotes like "[1]","" avoiding duplicates in the footer. Include URLs in the footer.'
+""")
