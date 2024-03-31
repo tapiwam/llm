@@ -1,9 +1,12 @@
+from importlib import metadata
+import os
 from typing import Type
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from langchain_community.chat_models import ChatOllama
+from langchain_anthropic import ChatAnthropic
 
-from langchain.prompts import ChatPromptTemplate,AIMessagePromptTemplate,SystemMessagePromptTemplate,HumanMessagePromptTemplate, BasePromptTemplate
+from langchain.prompts import PromptTemplate,ChatPromptTemplate,AIMessagePromptTemplate,SystemMessagePromptTemplate,HumanMessagePromptTemplate, BasePromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage, BaseMessage
 
 from langchain.output_parsers import PydanticOutputParser
@@ -26,6 +29,8 @@ from langgraph.graph import StateGraph, END
 
 from langchain_core.runnables import RunnableConfig
 
+from langchain.chains import load_summarize_chain
+
 from langchain_community.retrievers import WikipediaRetriever
 from langchain_community.utilities.duckduckgo_search import DuckDuckGoSearchAPIWrapper
 from langchain_core.tools import tool
@@ -43,6 +48,12 @@ def get_openai_llms(regular_model: str = "gpt-3.5-turbo", long_context_model: st
 
 def get_chat_prompt_from_prompt_templates(messages: list) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(messages)
+
+def get_anthropic_llms() -> tuple[ChatAnthropic, ChatAnthropic]:
+    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL")
+    ANTHROPIC_MODEL = ANTHROPIC_MODEL if ANTHROPIC_MODEL else "claude-3-haiku-20240307"
+    llm = ChatAnthropic(model_name=ANTHROPIC_MODEL)
+    return llm, llm
 
 def get_ollama_llms(regular_ollama_base_url = "http://192.168.68.99:11434", regular_model = "mistral:instruct", 
                    long_context_ollama_base_url = "http://192.168.68.99:11434", long_context_model = "mistral:instruct"
@@ -152,31 +163,20 @@ async def search_engine(query: str):
     return [{"content": r["body"], "url": r["href"]} for r in results]
 
 
-async def fetch_pages_from_refs(references: list[Document], limit: int|None = None) -> list[Document]:
-    pages = []
-    
-    for ref in references:
-        try:
-            url = ref.metadata['source'] if 'source' in ref.metadata else None
-            if not url:
-                continue
-            else:
-                print(f"Fetching web page from url: {url}")
-                docs1 = await get_web_page_docs_from_url1(url, tags_to_extract=[ "p", "h1", "h2", "h3"])
-                if docs1 is not None:
-                    if limit is not None:
-                        for doc in docs1:
-                            doc.page_content = doc.page_content[:limit]
-                    pages.extend(docs1)
-                    
-        except Exception as e:
-            print(f"Error fetching web page from url: {url}, error: {e}")
-            continue
-        
-    return pages
+
 
 @tool
 async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h1", "h2", "h3", "div", "li", "ul", "ol", "a"]) -> list[Document]|None:
+    """
+    Get web page contents from url in the form of Documents
+    
+    Args:
+        url (str): The url to fetch the web page from
+        tags_to_extract (list[str]): The tags to extract from the web page
+
+    Returns:
+        docs (list[Document]): The web page contents in the form of Documents
+    """
     
     docs_transformed = None
     print(f"Loading web page from url: {url}")
@@ -196,17 +196,33 @@ async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h
 
     return docs_transformed
 
+# async def fetch_page_content_from_refs(references: list[Document], limit: int|None = None) -> list[Document]:
+#     pages = []
+    
+#     for ref in references:
+#         try:
+#             url = ref.metadata['source'] if 'source' in ref.metadata else None
+#             if not url:
+#                 continue
+#             else:
+#                 print(f"Fetching web page from url: {url}")
+#                 docs1 = await get_web_page_docs_from_url1(url, tags_to_extract=[ "p", "h1", "h2", "h3"])
+#                 if docs1 is not None:
+#                     if limit is not None:
+#                         for doc in docs1:
+#                             doc.page_content = doc.page_content[:limit]
+#                     pages.extend(docs1)
+                    
+#         except Exception as e:
+#             print(f"Error fetching web page from url: {url}, error: {e}")
+#             continue
+        
+#     return pages
 
 async def fetch_pages_from_refs(references: list[Document], limit: int|None = None) -> dict[str, list[Document]]:
     page_map = {}
     urls = [ref.metadata['source'] if 'source' in ref.metadata else None for ref in references]
-    
-    # populate page_map
-    # for url in urls:
-    #     if url is not None:
-    #         if url not in page_map:
-    #             page_map[url] = []
-    
+
     # Get web pages
     docs: list[list[Document]] = await get_web_page_docs_from_url1.abatch(urls, tags_to_extract=[ "p", "h1", "h2", "h3"], limit=limit)
     
@@ -222,3 +238,62 @@ async def fetch_pages_from_refs(references: list[Document], limit: int|None = No
     
     return page_map
 
+
+def summarize_single_doc(llm, topic, docs: list[Document]) -> Document:
+    
+    prompt_template = """Gieven the provided context, write a concise summary of the text provided. 
+    Include as many details as possible from the gathered information. If the context is not useful, return no summary.
+    
+    Context:
+    ```
+    {topic}
+    ```
+    
+    Content:
+    {text}
+    
+    CONCISE SUMMARY:"""
+    prompt = PromptTemplate.from_template(prompt_template)
+    prompt = prompt.partial(topic=topic)
+    
+    text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=1500, chunk_overlap=100)
+    split_docs = text_splitter.split_documents(docs)
+
+    refine_template = (
+        "Your job is to produce a final summary\n"
+        "We have provided an existing summary up to a certain point: {existing_answer}\n"
+        "We have the opportunity to refine the existing summary"
+        "(only if needed) with some more context below.\n"
+        "------------\n"
+        "{text}\n"
+        "------------\n"
+        "Given the new context, refine the original summary"
+        "If the context isn't useful, return the original summary."
+    )
+    refine_prompt = PromptTemplate.from_template(refine_template)
+    chain = load_summarize_chain(
+        llm=llm,
+        chain_type="refine",
+        question_prompt=prompt,
+        refine_prompt=refine_prompt,
+        return_intermediate_steps=True,
+        input_key="input_documents",
+        output_key="output_text"
+    )
+    result = chain({"input_documents": split_docs}, return_only_outputs=True)
+    doc = Document(page_content=result['output_text'], metadata = docs[0].metadata)
+    return doc
+
+def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str, list[Document]]:
+    
+    summaries = {}
+    if docs is not None and len(docs) > 0:
+        for i, (key, doc) in enumerate(docs.items()):
+            try:
+                print(f"Summarizing {i+1}/{len(docs)} : {key}")
+                summary = summarize_single_doc(llm, topic, doc)
+                summaries[key] = summary
+            except Exception as e:
+                print(f"Error summarizing [{key}], error: {e}")
+            
+    return summaries
