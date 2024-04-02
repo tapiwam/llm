@@ -93,109 +93,127 @@ def get_chain_answer(fast_llm):
     return get_chain_with_outputparser(gen_answer_prompt, fast_llm, ac_parser)\
         .with_config(run_name="GenerateAnswer")
 
-def route_messages(state: InterviewState, name: str = "SubjectMatterExpert"):
 
-    name = cleanup_name(name)
-
-    logger.info(f'Routing messages for [{name}]')
-
-    messages = state["messages"]
-    num_responses = len(
-        [m for m in messages if isinstance(m, AIMessage) and m.name == name]
-    )
-
-    if num_responses >= MAX_INTERVIEW_QUESTIONS:
-        return END
+def get_chain_question_generator(fast_llm):
+    gen_qn_prompt = get_chat_prompt_from_prompt_templates([prompts.gen_question_system_generator, prompts.generate_messages_placeholder()])
     
-    last_question = messages[-2]
-    if last_question.content.endswith("Thank you so much for your help!"):
-        return END
-    
-    logger.info(f'Continue asking question for [{name}] as this is not the last end of the conversation')
-    return "ask_question"
-
-
-def swap_roles(state: InterviewState, name: str) -> InterviewState:
-
-    # Normalize name
-    name = cleanup_name(name)
-
-    print(f'Swapping roles for {name}')
-
-    converted = []
-    for message in state["messages"]:
-        if isinstance(message, AIMessage) and message.name != name:
-            message = HumanMessage(**message.dict(exclude={"type"}))
-        converted.append(message)
-    
-    print(f'Converted messages for {name} while swapping roles: {len(converted)} messages')
-    state['messages'] = converted
-    
-    return state
-
-
-
-class StormInterviewGraph:
-    def __init__(self, fast_llm):
-        self.fast_llm = fast_llm
-        self.outline = get_chain_outline(fast_llm)
-        self.related_topics = get_chain_expand_related_topics(fast_llm)
-        self.perspective = get_chain_perspective_generator(fast_llm)
-        self.queries = get_chain_queries(fast_llm)
-        self.answer = get_chain_answer(fast_llm)
-        
-        # new runnable from swap_roles
-        self.tag_with_name = RunnableLambda(lambda state: tag_with_name(state)).with_types(input_type=InterviewState, output_type=InterviewState)
-        self.survey_subjects = RunnableLambda(lambda topic: self.asurvey_subjects(topic)).with_types(input_type=str, output_type=Perspectives)
-        self.generate_question = RunnableLambda(lambda state: self.agenerate_question(state)).with_types(input_type=InterviewState, output_type=InterviewState)
-
-        self.graph = self.build_graph()
-        
-    async def agenerate_question(self, state: InterviewState) -> InterviewState:
-        gen_qn_prompt = get_chat_prompt_from_prompt_templates([prompts.gen_question_system_generator, prompts.generate_messages_placeholder()])
-
-        editor: Editor = state["editor"]
-
-        name = cleanup_name(editor.name)
-        inputs = {"name": name, "state": state}
-
-        logger.info(f'Generating question for {name}')
-
-        gn_chain = (
-            RunnableLambda(swap_roles).bind(name=name)
-            | gen_qn_prompt.partial(persona=editor.persona)
-            | self.fast_llm
-            | self.tag_with_name.bind(name=name)
+    gn_chain = (
+            gen_qn_prompt
+            | fast_llm
         )
-        result:AIMessage = await gn_chain.ainvoke(state)
-        state["messages"] = ([result])
-
-        logger.info(f'Generated question for {name}')
-        return state
     
-    async def asurvey_subjects(self, topic: str)-> Perspectives:
-        logger.info(f"Survey Subjects for Topic: {topic}")
-        related_subjects = await self.related_topics.ainvoke({"topic": topic})
-        retrieved_docs = await wikipedia_retriever.abatch(
-            related_subjects.topics, return_exceptions=True
-        )
-        all_docs = []
-        for docs in retrieved_docs:
-            if isinstance(docs, BaseException):
-                continue
-            all_docs.extend(docs)
-        logger.info(f"Retrieved {len(all_docs)} docs for Topic: {topic}")
+    
+    return gn_chain
+
+
+
+# ==========================================
+
+
+# def route_messages(state: InterviewState, name: str = "SubjectMatterExpert"):
+
+#     name = cleanup_name(name)
+
+#     logger.info(f'Routing messages for [{name}]')
+
+#     messages = state["messages"]
+#     num_responses = len(
+#         [m for m in messages if isinstance(m, AIMessage) and m.name == name]
+#     )
+
+#     if num_responses >= MAX_INTERVIEW_QUESTIONS:
+#         return END
+    
+#     last_question = messages[-2]
+#     if last_question.content.endswith("Thank you so much for your help!"):
+#         return END
+    
+#     logger.info(f'Continue asking question for [{name}] as this is not the last end of the conversation')
+#     return "ask_question"
+
+
+# def swap_roles(state: InterviewState, name: str) -> InterviewState:
+
+#     # Normalize name
+#     name = cleanup_name(name)
+
+#     print(f'Swapping roles for {name}')
+
+#     converted = []
+#     for message in state["messages"]:
+#         if isinstance(message, AIMessage) and message.name != name:
+#             message = HumanMessage(**message.dict(exclude={"type"}))
+#         converted.append(message)
+    
+#     print(f'Converted messages for {name} while swapping roles: {len(converted)} messages')
+#     state['messages'] = converted
+    
+#     return state
+
+
+
+# class StormInterviewGraph:
+#     def __init__(self, fast_llm):
+#         self.fast_llm = fast_llm
+#         self.outline = get_chain_outline(fast_llm)
+#         self.related_topics = get_chain_expand_related_topics(fast_llm)
+#         self.perspective = get_chain_perspective_generator(fast_llm)
+#         self.queries = get_chain_queries(fast_llm)
+#         self.answer = get_chain_answer(fast_llm)
         
-        formatted = format_docs(all_docs)
-        return await self.perspective.ainvoke({"examples": formatted, "topic": topic})
+#         # new runnable from swap_roles
+#         self.tag_with_name = RunnableLambda(lambda state: tag_with_name(state)).with_types(input_type=InterviewState, output_type=InterviewState)
+#         self.survey_subjects = RunnableLambda(lambda topic: self.asurvey_subjects(topic)).with_types(input_type=str, output_type=Perspectives)
+#         self.generate_question = RunnableLambda(lambda state: self.agenerate_question(state)).with_types(input_type=InterviewState, output_type=InterviewState)
 
-    def build_graph(self):
-        builder = StateGraph(InterviewState)
+#         self.graph = self.build_graph()
+        
+#     async def agenerate_question(self, state: InterviewState) -> InterviewState:
+#         gen_qn_prompt = get_chat_prompt_from_prompt_templates([prompts.gen_question_system_generator, prompts.generate_messages_placeholder()])
 
-        builder.add_node("ask_question", self.generate_question)
-        builder.add_node("answer_question", self.answer)
-        builder.add_conditional_edges("answer_question", route_messages)
-        builder.add_edge("ask_question", "answer_question")
+#         editor: Editor = state["editor"]
 
-        builder.set_entry_point("ask_question")
-        return builder.compile().with_config(run_name="Conduct Interviews")
+#         name = cleanup_name(editor.name)
+#         inputs = {"name": name, "state": state}
+
+#         logger.info(f'Generating question for {name}')
+
+#         gn_chain = (
+#             RunnableLambda(swap_roles).bind(name=name)
+#             | gen_qn_prompt.partial(persona=editor.persona)
+#             | self.fast_llm
+#             | self.tag_with_name.bind(name=name)
+#         )
+#         result:AIMessage = await gn_chain.ainvoke(state)
+#         state["messages"] = ([result])
+
+#         logger.info(f'Generated question for {name}')
+#         return state
+    
+#     async def asurvey_subjects(self, topic: str)-> Perspectives:
+#         logger.info(f"Survey Subjects for Topic: {topic}")
+#         related_subjects = await self.related_topics.ainvoke({"topic": topic})
+#         retrieved_docs = await wikipedia_retriever.abatch(
+#             related_subjects.topics, return_exceptions=True
+#         )
+#         all_docs = []
+#         for docs in retrieved_docs:
+#             if isinstance(docs, BaseException):
+#                 continue
+#             all_docs.extend(docs)
+#         logger.info(f"Retrieved {len(all_docs)} docs for Topic: {topic}")
+        
+#         formatted = format_docs(all_docs)
+#         return await self.perspective.ainvoke({"examples": formatted, "topic": topic})
+
+#     def build_graph(self):
+#         builder = StateGraph(InterviewState)
+
+#         builder.add_node("ask_question", self.generate_question)
+#         builder.add_node("answer_question", self.answer)
+#         builder.add_conditional_edges("answer_question", route_messages)
+#         builder.add_edge("ask_question", "answer_question")
+
+#         builder.set_entry_point("ask_question")
+#         return builder.compile().with_config(run_name="Conduct Interviews")
+    

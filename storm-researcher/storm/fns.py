@@ -23,10 +23,15 @@ def add_messages(left, right):
     return left + right
 
 
-def update_references(references, new_references):
-    if not references:
+def update_references(references: dict[str, Any], new_references: dict[str, Any]) -> dict[str, Any]:
+    print(f"Updating references: \n\t{references} \nwith new references: \n\t{new_references}")
+    if not references or isinstance(references, dict):
         references = {}
-    references.update(new_references)
+        
+    # if instance of dict, update
+    if new_references is not None and isinstance(new_references, dict):
+        references.update(new_references)
+    
     return references
 
 

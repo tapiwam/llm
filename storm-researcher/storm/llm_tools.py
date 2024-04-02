@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from langchain_community.chat_models import ChatOllama
 from langchain_anthropic import ChatAnthropic
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 
 from langchain.prompts import PromptTemplate,ChatPromptTemplate,AIMessagePromptTemplate,SystemMessagePromptTemplate,HumanMessagePromptTemplate, BasePromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage, BaseMessage
@@ -35,16 +35,15 @@ from langchain.chains import load_summarize_chain
 from langchain_community.retrievers import WikipediaRetriever
 from langchain_community.utilities.duckduckgo_search import DuckDuckGoSearchAPIWrapper
 from langchain_core.tools import tool
-from sympy import N
 
-
+from .models import *
 from .fns import cleanup_name
 
 # ================================================
 # LLM tools
 # ================================================
 
-def get_openai_llms(regular_model: str = "gpt-3.5-turbo", long_context_model: str = "gpt-4-turbo") -> tuple[ChatOpenAI, ChatOpenAI]:
+def get_openai_llms(regular_model: str = "gpt-3.5-turbo", long_context_model: str = "gpt-3.5-turbo") -> tuple[ChatOpenAI, ChatOpenAI]:
     return ChatOpenAI(model=regular_model), ChatOpenAI(model=long_context_model)
 
 def get_chat_prompt_from_prompt_templates(messages: list) -> ChatPromptTemplate:
@@ -298,6 +297,7 @@ def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str
                 print(f"Error summarizing [{key}], error: {e}")
             
     return summaries
+
 
 
 # ===========================================
