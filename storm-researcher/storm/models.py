@@ -1,10 +1,16 @@
+from attr import dataclass
 from langchain_core.pydantic_v1 import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Type
 from typing_extensions import TypedDict
 from langchain_core.messages import AnyMessage
 from typing import Annotated, Sequence
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
+
 import json, re
+
+from prometheus_client import Summary
 
 from .fns import add_messages, update_references, update_editor
 
@@ -90,12 +96,45 @@ class Perspectives(BaseModel):
 # ==============================================================================
 # ==============================================================================
 
+@dataclass
+class Reference:
+    url: str
+    title: str|None = None
+    summary: str|None = None
+    html: str|None = None
+    md: str|None = None
+    txt: str|None = None
 
-class InterviewState(TypedDict):
-    messages: Annotated[List[AnyMessage], add_messages]
-    references: Annotated[Optional[dict], update_references]
-    editor: Annotated[Optional[Editor], update_editor]
+
+@dataclass
+class InterviewConfig:
+    long_llm: BaseChatModel
+    fast_llm: BaseChatModel
+    max_conversations: int = 5
+    tags_to_extract: List[str] = Field(default_factory=list, description="List of tags to extract from the web page")
+    embeddings: Any = None
+    vectorstore_dir: str = Field("./data/storm/vectorstore/", description="Directory to store the vector store")
+    vectorstore: Any = None
     
+    
+    # TAGS_TO_EXTRACT = [ "p", "h1", "h2", "h3"]
+    
+    # init
+
+@dataclass
+class InterviewState:
+    editor: Editor = Field(..., description="Editor for the interview")
+    messages: list[AnyMessage] = Field(default_factory=list, description="List of messages for the conversation")
+    references: dict[str, Reference] = Field(default_factory=list, description="List of references for the interview") # Annotated[Optional[dict], update_references]    
+    summary: str = Field("", description="Summary of the interview")
+    
+@dataclass
+class Interviews(BaseModel):
+    config: InterviewConfig = Field(..., description="Configuration for the interview")
+    perspectives: Perspectives = Field(..., description="List of perspectives for the interviews")
+    conversations: dict[Editor, InterviewState] = Field(default_factory=dict, description="List of conversations for the interview") #Annotated[Dict[Editor, List[AnyMessage]], Field(default_factory=dict)]
+    
+
 
 # ==============================================================================
 # ==============================================================================
@@ -162,4 +201,18 @@ class WikiSection(BaseModel):
             f"## {self.section_title}\n\n{self.content}\n\n{subsections}".strip()
             + f"\n\n{citations}".strip()
         )
+
+
+# ==============================================================================
+# ==============================================================================
+
+class ResearchState(TypedDict):
+    topic: str
+    outline: Outline
+    editors: List[Editor]
+    interview_results: List[InterviewState]
+    # The final sections output
+    sections: List[WikiSection]
+    article: str
+    
 

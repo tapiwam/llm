@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from langchain_community.chat_models import ChatOllama
 from langchain_anthropic import ChatAnthropic
+from langchain.vectorstores import Chroma
 
 from langchain.prompts import PromptTemplate,ChatPromptTemplate,AIMessagePromptTemplate,SystemMessagePromptTemplate,HumanMessagePromptTemplate, BasePromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage, BaseMessage
@@ -297,3 +298,8 @@ def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str
                 print(f"Error summarizing [{key}], error: {e}")
             
     return summaries
+
+
+# ===========================================
+# ===========================================
+

@@ -34,6 +34,8 @@ You can use other Wiki pages of related topics for inspiration. For each editor,
 
 Wiki page outlines of related topics for inspiration:
 {examples}
+
+{format_instructions}
 """)
 
 # ===========================================
