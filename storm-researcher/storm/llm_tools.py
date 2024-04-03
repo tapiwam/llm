@@ -39,6 +39,9 @@ from langchain_core.tools import tool
 from .models import *
 from .fns import cleanup_name
 
+from bs4 import BeautifulSoup
+import markdownify 
+
 # ================================================
 # LLM tools
 # ================================================
@@ -164,9 +167,8 @@ async def search_engine(query: str):
 
 
 
-
 @tool
-async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h1", "h2", "h3", "div", "li", "ul", "ol", "a"]) -> list[Document]|None:
+async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h1", "h2", "h3", "div", "li", "ul", "ol", "a"]) -> tuple[str, str, list[Document]]:
     """
     Get web page contents from url in the form of Documents
     
@@ -188,55 +190,40 @@ async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h
         # Transform
         bs_transformer = BeautifulSoupTransformer()
         docs_transformed = bs_transformer.transform_documents(html, tags_to_extract=tags_to_extract)
+        
+        return url, html, docs_transformed
 
     except Exception as e:
         print(f"Error loading web page from url: {url}, error: {e}")
-        return None
+        return url, '', []
    
 
-    return docs_transformed
 
-# async def fetch_page_content_from_refs(references: list[Document], limit: int|None = None) -> list[Document]:
-#     pages = []
+async def fetch_pages_from_refs(references: list[Reference], limit: int|None = None) -> list[Reference]:
+    page_map:dict[str, Reference] = {ref.url : ref for ref in references}
     
-#     for ref in references:
-#         try:
-#             url = ref.metadata['source'] if 'source' in ref.metadata else None
-#             if not url:
-#                 continue
-#             else:
-#                 print(f"Fetching web page from url: {url}")
-#                 docs1 = await get_web_page_docs_from_url1(url, tags_to_extract=[ "p", "h1", "h2", "h3"])
-#                 if docs1 is not None:
-#                     if limit is not None:
-#                         for doc in docs1:
-#                             doc.page_content = doc.page_content[:limit]
-#                     pages.extend(docs1)
-                    
-#         except Exception as e:
-#             print(f"Error fetching web page from url: {url}, error: {e}")
-#             continue
-        
-#     return pages
-
-async def fetch_pages_from_refs(references: list[Document], limit: int|None = None) -> dict[str, list[Document]]:
-    page_map = {}
-    urls = [ref.metadata['source'] if 'source' in ref.metadata else None for ref in references]
+    
+    urls = [ref.url if ref.url else '' for ref in references]
 
     # Get web pages
-    docs: list[list[Document]] = await get_web_page_docs_from_url1.abatch(urls, tags_to_extract=[ "p", "h1", "h2", "h3"], limit=limit)
+    docs: list[tuple[str, str, list[Document]]] = await get_web_page_docs_from_url1.abatch(urls, tags_to_extract=[ "p", "h1", "h2", "h3"], limit=limit)
     
-    # filter None docs
+    for url,html,extracted_docs in docs:
+        
+        ref = page_map[url]
+        if ref is not None and html is not None and len(html) > 0:
+            # xtract html
+            ref.html = html
+            
+            md = markdownify.markdownify(html, heading_style="ATX") 
+            ref.md = md
+            
+            txt = '\n'.join([doc.page_content for doc in extracted_docs])
+            ref.txt = txt
+            
+            print(f"Extracted web page from url: {url}")
     
-    for doc in docs:
-        if doc is not None and len(doc) > 0:
-            key = doc[0].metadata['source'] if 'source' in doc[0].metadata else None
-            if key is not None:
-                if key not in page_map:
-                    page_map[key] = []
-                page_map[key].extend(doc)
-    
-    return page_map
+    return list(page_map.values())
 
 
 def summarize_single_doc(llm, topic, docs: list[Document]) -> Document:

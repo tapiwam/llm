@@ -1,4 +1,4 @@
-from attr import dataclass
+from dataclasses import dataclass, asdict, field
 from langchain_core.pydantic_v1 import BaseModel, Field
 from typing import Any, Dict, List, Optional, Type
 from typing_extensions import TypedDict
@@ -13,7 +13,10 @@ import json, re
 
 from prometheus_client import Summary
 
-from .fns import add_messages, update_references, update_editor
+from .fns import add_messages, cleanup_name, update_references, update_editor
+
+# ==============================================================================
+# ==============================================================================
 
 
 class Subsection(BaseModel):
@@ -23,9 +26,19 @@ class Subsection(BaseModel):
     @property
     def as_str(self) -> str:
         return f"### {self.subsection_title}\n\n{self.description}".strip()
+    
+    # to dict
+    def as_dict(self) -> dict:
+        return asdict(self)
+    
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict) -> "Subsection":
+        return Subsection(
+            subsection_title=data["subsection_title"],
+            description=data["description"],
+        )
 
-# ==============================================================================
-# ==============================================================================
 
 class Section(BaseModel):
     section_title: str = Field(..., title="Title of the section")
@@ -34,6 +47,19 @@ class Section(BaseModel):
         default=None,
         title="Titles and descriptions for each subsection of the Wiki page.",
     )
+    
+    # to dict
+    def as_dict(self) -> dict:
+        return asdict(self)
+    
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict) -> "Section":
+        return Section(
+            section_title=data["section_title"],
+            description=data["description"],
+            subsections=[Subsection.from_dict(subsection) for subsection in data["subsections"]],
+        )
 
     @property
     def as_str(self) -> str:
@@ -50,6 +76,18 @@ class Outline(BaseModel):
         default_factory=list,
         title="Titles and descriptions for each section of the Wiki page.",
     )
+    
+    # to dict
+    def as_dict(self) -> dict:
+        return asdict(self)
+    
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict) -> "Outline":
+        return Outline(
+            page_title=data["page_title"],
+            sections=[Section.from_dict(section) for section in data["sections"]],
+        )
 
     @property
     def as_str(self) -> str:
@@ -103,23 +141,27 @@ class Perspectives(BaseModel):
 
 @dataclass
 class Reference:
-    url: str = Field(..., description="URL of the reference")
-    title: str|None = Field(None, description="Title of the reference")
-    summary: str|None = Field(None, description="Summary of the reference")
-    html: str|None = Field(None, description="HTML content of the reference")
-    md: str|None = Field(None, description="Markdown content of the reference")
-    txt: str|None = Field(None, description="Text content of the reference")
+    url: str
+    title: str|None = None
+    summary: str|None = None
+    html: str|None = None
+    md: str|None = None
+    txt: str|None = None
+    
+    #hash
+    def __hash__(self):
+        return hash((type(self), self.url))
 
 
 @dataclass
 class InterviewConfig:
-    long_llm: BaseChatModel = Field(..., description="Long context language model")
-    fast_llm: BaseChatModel = Field(..., description="Fast context language model")
+    long_llm: BaseChatModel 
+    fast_llm: BaseChatModel 
     max_conversations: int = 5
     max_reference_length: int = 10000
-    tags_to_extract: List[str] = Field(default_factory=list, description="List of tags to extract from the web page")
+    tags_to_extract: List[str] = field(default_factory=list)
     embeddings: Any = None
-    vectorstore_dir: str = Field("./data/storm/vectorstore/", description="Directory to store the vector store")
+    vectorstore_dir: str = "./data/storm/vectorstore/"
     vectorstore: Any = None,
     runnable_config: Optional[RunnableConfig] = None
     
@@ -135,11 +177,12 @@ class InterviewConfig:
 
 @dataclass
 class InterviewState:
-    interview_config: InterviewConfig = Field(..., description="Configuration for the interview")
-    editor: Editor = Field(..., description="Editor for the interview")
-    messages: list[AnyMessage] = Field(default_factory=list, description="List of messages for the conversation")
-    references: dict[str, Reference] = Field(default_factory=dict, description="List of references for the interview") # Annotated[Optional[dict], update_references]    
-    summary: str = Field("", description="Summary of the interview")
+    interview_config: InterviewConfig
+    editor: Editor
+    messages: list[AnyMessage] = field(default_factory=list)
+    messagesQA: list[AnyMessage] = field(default_factory=list)
+    references: dict[str, Reference] = field(default_factory=dict) # Annotated[Optional[dict], update_references]    
+    summary: str = ""
     
     # as dict
     def as_dict(self) -> dict:
@@ -147,6 +190,7 @@ class InterviewState:
             "interview_config": self.interview_config,
             "editor": self.editor,
             "messages": self.messages,
+            "messagesQA": self.messagesQA,
             "references": self.references,
             "summary": self.summary
         }
@@ -158,6 +202,7 @@ class InterviewState:
             interview_config=data["interview_config"],
             editor=data["editor"],
             messages=data["messages"],
+            messagesQA=data["messagesQA"],
             references=data["references"],
             summary=data["summary"]
         )
@@ -174,14 +219,6 @@ class InterviewState:
                 if len(message.content) > max_characters:
                     message.content = message.content[-max_characters:]
                     print(f"Truncated message {i}/{len(self.messages)} to {max_characters} characters for msgName:{self.editor.name}")
-            
-    
-@dataclass
-class Interviews:
-    interview_config: InterviewConfig = Field(..., description="Configuration for the interview")
-    perspectives: Perspectives|None = Field(..., description="List of perspectives for the interviews")
-    conversations: dict[Editor, InterviewState] = Field(default_factory=dict, description="List of conversations for the interview") #Annotated[Dict[Editor, List[AnyMessage]], Field(default_factory=dict)]
-    
 
 
 # ==============================================================================
@@ -254,13 +291,64 @@ class WikiSection(BaseModel):
 # ==============================================================================
 # ==============================================================================
 
-class ResearchState(TypedDict):
-    topic: str
-    outline: Outline
-    editors: List[Editor]
-    interview_results: List[InterviewState]
-    # The final sections output
-    sections: List[WikiSection]
-    article: str
+# class ResearchState(TypedDict):
+#     topic: str
+#     outline: Outline
+#     editors: List[Editor]
+#     interview_results: List[InterviewState]
+#     # The final sections output
+#     sections: List[WikiSection]
+#     article: str
     
 
+@dataclass
+class ResearchState:
+    topic: str
+    interview_config: InterviewConfig
+    initial_outline: Outline|None = None
+    outline: Outline|None = None
+    related_subjects: RelatedSubjects|None = None
+    perspectives: Perspectives|None = None
+    # default factory
+    conversations: dict[str, InterviewState] = field(default_factory=dict)
+    sections: List[WikiSection] = field(default_factory=list)
+    article: str = ""
+    
+    # to dict
+    def to_dict(self):
+        return {
+            "topic": self.topic,
+            "interview_config": self.interview_config,
+            "initial_outline": self.initial_outline,
+            "outline": self.outline,
+            "related_subjects": self.related_subjects,
+            "perspectives": self.perspectives,
+            "conversations": self.conversations,
+            "sections": self.sections,
+            "article": self.article
+            }
+    
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict):
+        return ResearchState(
+            topic=data["topic"],
+            initial_outline=data["initial_outline"],
+            outline=data["outline"],
+            related_subjects=data["related_subjects"],
+            interview_config=data["interview_config"],
+            perspectives=data["perspectives"],
+            conversations=data["conversations"],
+            sections=data["sections"],
+            article=data["article"]
+        )
+
+    # Initialize conversations
+    def initialize_conversations(self):
+        if self.perspectives is not None \
+            and self.perspectives.editors is not None \
+            and len(self.perspectives.editors) > 0:
+            for editor in self.perspectives.editors:
+                convo = InterviewState(interview_config=self.interview_config, editor=editor, messages=[], references={})
+                self.conversations[cleanup_name(editor.name)] = convo
+    
