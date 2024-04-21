@@ -1,6 +1,7 @@
 import os, logging
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
+from pydantic import InstanceOf
 
 # Load environment variables from .env file by default
 load_dotenv(find_dotenv())
@@ -123,7 +124,10 @@ async def node_generate_question(state: InterviewState) -> dict[str, Any]:
         InterviewState: The updated interview state with the generated question added as a message.
     """
     editor: Editor = state.editor
+    editor = editor if isinstance(editor, Editor) else Editor.from_dict(editor)
+
     interview_config = state.interview_config
+    interview_config = state.interview_config if isinstance(interview_config, InterviewConfig) else InterviewConfig.from_dict(interview_config)
     fast_llm = interview_config.fast_llm
 
     # Normalize name
@@ -161,7 +165,11 @@ async def node_generate_answer(state: InterviewState) -> dict[str, Any]:
     """
     
     editor: Editor = state.editor
+    editor = editor if isinstance(editor, Editor) else Editor.from_dict(editor)
+
+
     config = state.interview_config
+    config = config if isinstance(config, InterviewConfig) else InterviewConfig.from_dict(config)
     fast_llm = config.fast_llm
     
     # Chain definitions
@@ -239,7 +247,11 @@ def node_route_messages(state_dict: dict):
     state = InterviewState.from_dict(state_dict)
 
     editor = state.editor
+    editor = editor if isinstance(editor, Editor) else Editor.from_dict(editor)
+
     config = state.interview_config
+    config = config if isinstance(config, InterviewConfig) else InterviewConfig.from_dict(config)
+
     name = cleanup_name(editor.name)
 
     print(f'Routing messages for [{name}]')
@@ -356,6 +368,9 @@ async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
     state.perspectives = perspectives
     state.conversations = conversations
 
+    save_json_to_file('interviews.json', state.as_dict(with_config=False))
+    print(f"Interviews saved to interviews.json")
+
     print(f"\n-- Generated {len(perspectives.editors)} perspectives for Topic: [{topic}] --\n")
 
     return state.as_dict()
@@ -366,8 +381,10 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
 
     # return state.as_dict()
 
-    conversations = state.conversations
+    conversations = state.conversations or {}
     interview_config = state.interview_config
+
+    print(f"\n\n***\n{state.conversations}\n***\n\n")
 
     # Define interview grapgh
     graph = StormInterviewGraph1(interview_config)
@@ -377,7 +394,9 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
     responses = []
     for idx, editor_hash in enumerate(conversations.keys()):
         editor = conversations[editor_hash][0]
+        editor = Editor.from_dict(editor) if isinstance(editor, dict) else editor
         convo = conversations[editor_hash][1]
+        convo = InterviewState.from_dict(convo) if isinstance(convo, dict) else convo
 
         print(f"\n\n===============\nRunning interview [{idx+1}/{len(conversations)}] for {editor.name} - {editor.persona}\n\n")
         try:
@@ -391,9 +410,14 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
             print(f"{r}")
         except Exception as e:
             print(f"Error running interview for {editor.name}: {e}")
+            print(traceback.format_exc())
             continue
 
         print(f"===============\nFinished interview for {editor.name} - {editor.persona}\n\n")
+
+    # Save responses to file
+    save_json_to_file('interviews.json', state.as_dict(with_config=False))
+    print(f"Interviews saved to interviews.json")
 
     return state.as_dict()
 

@@ -1,4 +1,5 @@
 import re
+import json
 from typing_extensions import TypedDict
 from typing import Annotated, Sequence, List, Optional
 from itertools import chain
@@ -52,3 +53,17 @@ def format_doc(doc: Document, max_length=1000)-> str:
 
 def format_docs(docs: List[Document], max_length=500) -> str:
     return "\n\n".join(format_doc(doc, max_length=max_length) for doc in docs)
+
+
+def save_json_to_file(file_path: str, data: dict[str, Any]) -> None:
+
+    print(f"==================\nSaving data to {file_path}\n\n{data}\n\n=======================")
+
+    with open(file_path, "w") as f:
+        json.dump(data, f, indent=4)
+    print(f"Saved data to {file_path}")
+
+def load_json_from_file(file_path: str) -> dict[str, Any]:
+    with open(file_path, "r") as f:
+        return json.load(f)
+    
