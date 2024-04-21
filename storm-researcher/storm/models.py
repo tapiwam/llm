@@ -4,7 +4,7 @@ from attr import dataclass
 from langchain_core.pydantic_v1 import BaseModel, Field
 from typing import Any, Dict, List, Optional, Type
 from typing_extensions import TypedDict
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, BaseMessage
 from typing import Annotated, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -15,7 +15,7 @@ import json, re
 
 from prometheus_client import Summary
 
-from .fns import add_messages, update_references, update_editor
+from .fns import add_messages, update_references, update_editor, message_to_dict, dict_to_message
 
 # ==============================================================================
 # ==============================================================================
@@ -196,7 +196,7 @@ class InterviewConfig:
 class InterviewState:
     interview_config: InterviewConfig
     editor: Editor
-    messages: list[AnyMessage] = []
+    messages: list[BaseMessage] = []
     references: dict[str, Reference] = {}
     
     # as dict
@@ -213,6 +213,15 @@ class InterviewState:
         if refs:
             for k, v in refs.items():
                 refs1[k] = v.as_dict() if isinstance(v, Reference) else v
+
+        m = self.messages if self.messages else None
+        m1 = []
+        if m:
+            for v in m:
+                if isinstance(v, BaseMessage):
+                    m1.append(message_to_dict(v))
+                else:
+                    m1.append(v)
 
         return {
             "interview_config": ic1,
@@ -233,10 +242,15 @@ class InterviewState:
             if isinstance(data, dict): 
                 print("InterviewState.from_dict: data is an instance of dict")
 
+                m = data["messages"] if "messages" in data else None
+                m1: list[BaseMessage] = []
+                if m and isinstance(m, list):
+                    m1 = [dict_to_message(m1) for m1 in m]
+
                 return cls(
                     interview_config=data["interview_config"],
                     editor=data["editor"],
-                    messages=data["messages"] if "messages" in data else [],
+                    messages=m1,
                     references=data["references"] if "references" in data else {}
                 )
         except Exception as e:

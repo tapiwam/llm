@@ -4,7 +4,7 @@ from typing_extensions import TypedDict
 from typing import Annotated, Sequence, List, Optional
 from itertools import chain
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, SystemMessage, AIMessage, ChatMessage, FunctionMessage, ToolMessage
 from langchain.schema import Document
 
 from .models import *
@@ -59,11 +59,48 @@ def save_json_to_file(file_path: str, data: dict[str, Any]) -> None:
 
     print(f"==================\nSaving data to {file_path}\n\n{data}\n\n=======================")
 
-    with open(file_path, "w") as f:
-        json.dump(data, f, indent=4)
-    print(f"Saved data to {file_path}")
+    try:
+        with open(file_path, "w") as f:
+            json.dump(data, f, indent=4)
+        print(f"Saved data to {file_path}")
+    except Exception as e:
+        print(f"Error saving data to {file_path}, error: {e}")
+        print(traceback.print_exc())
 
 def load_json_from_file(file_path: str) -> dict[str, Any]:
     with open(file_path, "r") as f:
         return json.load(f)
+
+def message_to_dict(message: BaseMessage) -> dict[str, Any]:
+
+    if isinstance(message, BaseMessage):
+        return dict(
+            name=message.name,
+            content=message.content,
+            type=message.type,
+            id=message.id,
+            response_metadata=message.response_metadata
+        )
+
+    print(f"Unexpected message type: {type(message)}")
+    return dict()
+
+def dict_to_message(data: dict[str, Any]) -> BaseMessage:
+    if isinstance(data, BaseMessage):
+        return data
     
+    if isinstance(data, dict):
+        if type(data["type"]) == "human":
+            return HumanMessage(**data)
+        if type(data["type"]) == "system":
+            return SystemMessage(**data)
+        if type(data["type"]) == "ai":
+            return AIMessage(**data)
+        if type(data["type"]) == "chat":
+            return ChatMessage(**data)
+        if type(data["type"]) == "function":
+            return FunctionMessage(**data)
+        if type(data["type"]) == "tool":
+            return ToolMessage(**data)
+        else:
+            return BaseMessage(**data)
