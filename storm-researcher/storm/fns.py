@@ -4,6 +4,7 @@ from typing import Annotated, Sequence, List, Optional
 from itertools import chain
 
 from langchain_core.messages import AnyMessage
+from langchain.schema import Document
 
 from .models import *
 
@@ -42,12 +43,12 @@ def update_editor(editor, new_editor):
     return editor
 
 
-def format_doc(doc, max_length=1000)-> str:
+def format_doc(doc: Document, max_length=1000)-> str:
     related = "- ".join(doc.metadata["categories"])
     return f"### {doc.metadata['title']}\n\nSummary: {doc.page_content}\n\nRelated\n{related}"[
         :max_length
     ]
 
 
-def format_docs(docs):
-    return "\n\n".join(format_doc(doc) for doc in docs)
+def format_docs(docs: List[Document], max_length=500) -> str:
+    return "\n\n".join(format_doc(doc, max_length=max_length) for doc in docs)

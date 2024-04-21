@@ -32,8 +32,12 @@ perspective_system_generator = generate_system_chat_prompt("""
 You need to select a diverse (and distinct) group of Wiki editors who will work together to create a comprehensive article on the topic. Each of them represents a different perspective, role, or affiliation related to this topic.\
 You can use other Wiki pages of related topics for inspiration. For each editor, add a description of what they will focus on.
 
+Topic of interest: ```{topic}```
+
 Wiki page outlines of related topics for inspiration:
+```
 {examples}
+```
 
 {format_instructions}
 """)

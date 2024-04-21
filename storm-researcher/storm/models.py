@@ -1,3 +1,4 @@
+import traceback
 from attr import dataclass
 from langchain_core.pydantic_v1 import BaseModel, Field
 from typing import Any, Dict, List, Optional, Type
@@ -15,6 +16,8 @@ from prometheus_client import Summary
 
 from .fns import add_messages, update_references, update_editor
 
+# ==============================================================================
+# ==============================================================================
 
 class Subsection(BaseModel):
     subsection_title: str = Field(..., title="Title of the subsection")
@@ -24,8 +27,6 @@ class Subsection(BaseModel):
     def as_str(self) -> str:
         return f"### {self.subsection_title}\n\n{self.description}".strip()
 
-# ==============================================================================
-# ==============================================================================
 
 class Section(BaseModel):
     section_title: str = Field(..., title="Title of the section")
@@ -64,6 +65,14 @@ class RelatedSubjects(BaseModel):
         description="Comprehensive list of related subjects as background research.",
     )
 
+    def as_dict(self) -> dict:
+        return {"topics": self.topics}
+    
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RelatedSubjects":
+        return cls(**data)
+
 
 # ==============================================================================
 # ==============================================================================
@@ -97,31 +106,40 @@ class Perspectives(BaseModel):
         # Add a pydantic validation/restriction to be at most M editors
     )
 
+    def as_dict(self) -> dict:
+        return {"editors": self.editors}
+
+    # from dict
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Perspectives":
+        return cls(**data)
+
 
 # ==============================================================================
 # ==============================================================================
 
 @dataclass
 class Reference:
-    url: str = Field(..., description="URL of the reference")
-    title: str|None = Field(None, description="Title of the reference")
-    summary: str|None = Field(None, description="Summary of the reference")
-    html: str|None = Field(None, description="HTML content of the reference")
-    md: str|None = Field(None, description="Markdown content of the reference")
-    txt: str|None = Field(None, description="Text content of the reference")
+    url: str
+    title: str|None = None
+    summary: str|None = None
+    html: str|None = None
+    md: str|None = None
+    txt: str|None = None
 
 
 @dataclass
 class InterviewConfig:
-    long_llm: BaseChatModel = Field(..., description="Long context language model")
-    fast_llm: BaseChatModel = Field(..., description="Fast context language model")
+    long_llm: BaseChatModel
+    fast_llm: BaseChatModel
     max_conversations: int = 5
     max_reference_length: int = 10000
-    tags_to_extract: List[str] = Field(default_factory=list, description="List of tags to extract from the web page")
+    tags_to_extract: List[str] = []
     embeddings: Any = None
-    vectorstore_dir: str = Field("./data/storm/vectorstore/", description="Directory to store the vector store")
+    vectorstore_dir: str = "./data/storm/vectorstore/"
     vectorstore: Any = None,
-    runnable_config: Optional[RunnableConfig] = None
+    interview_graph: Any = None
+    runnable_config: RunnableConfig|None = None
     
     def as_dict(self) -> dict:
         return {
@@ -135,11 +153,10 @@ class InterviewConfig:
 
 @dataclass
 class InterviewState:
-    interview_config: InterviewConfig = Field(..., description="Configuration for the interview")
-    editor: Editor = Field(..., description="Editor for the interview")
-    messages: list[AnyMessage] = Field(default_factory=list, description="List of messages for the conversation")
-    references: dict[str, Reference] = Field(default_factory=dict, description="List of references for the interview") # Annotated[Optional[dict], update_references]    
-    summary: str = Field("", description="Summary of the interview")
+    interview_config: InterviewConfig
+    editor: Editor
+    messages: list[AnyMessage] = []
+    references: dict[str, Reference] = {}
     
     # as dict
     def as_dict(self) -> dict:
@@ -147,20 +164,33 @@ class InterviewState:
             "interview_config": self.interview_config,
             "editor": self.editor,
             "messages": self.messages,
-            "references": self.references,
-            "summary": self.summary
+            "references": self.references
         }
     
     # from dict
     @classmethod
-    def from_dict(cls, data: dict):
-        return cls(
-            interview_config=data["interview_config"],
-            editor=data["editor"],
-            messages=data["messages"],
-            references=data["references"],
-            summary=data["summary"]
-        )
+    def from_dict(cls, data: dict[str, Any]):
+        if isinstance(data, InterviewState):
+            print("InterviewState.from_dict: data is an instance of InterviewState")
+            return data
+
+        # if instance of dict
+        try:
+            if isinstance(data, dict): 
+                print("InterviewState.from_dict: data is an instance of dict")
+
+                return cls(
+                    interview_config=data["interview_config"],
+                    editor=data["editor"],
+                    messages=data["messages"] if "messages" in data else [],
+                    references=data["references"] if "references" in data else {}
+                )
+        except Exception as e:
+            print(f"InterviewState.from_dict: error: {e}")
+            traceback.print_exc()
+            
+        raise ValueError(f"InterviewState.from_dict: \n data: {data}")
+        
     
     def trim_messages(self, max_messages: int|None = None, max_characters: int|None = None) -> None:
         # trim messages to max_messages
@@ -178,9 +208,51 @@ class InterviewState:
     
 @dataclass
 class Interviews:
-    interview_config: InterviewConfig = Field(..., description="Configuration for the interview")
+    topic: str
+    related_subjects: RelatedSubjects|None = None
+    related_subjects_formatted: str|None = None
     perspectives: Perspectives|None = Field(..., description="List of perspectives for the interviews")
-    conversations: dict[Editor, InterviewState] = Field(default_factory=dict, description="List of conversations for the interview") #Annotated[Dict[Editor, List[AnyMessage]], Field(default_factory=dict)]
+    conversations: dict[str, tuple[Editor, InterviewState]] = Field(default_factory=dict, description="List of conversations for the interview") #Annotated[Dict[Editor, List[AnyMessage]], Field(default_factory=dict)]
+    interview_config: InterviewConfig = Field(..., description="Configuration for the interview")
+    
+    def as_dict(self) -> dict:
+        return {
+            "topic": self.topic,
+            "related_subjects": self.related_subjects,
+            "related_subjects_formatted": self.related_subjects_formatted,
+            "interview_config": self.interview_config,
+            "perspectives": self.perspectives,
+            "conversations": self.conversations
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]):
+        if isinstance(data, Interviews):
+            print("Interviews.from_dict: data is an instance of Interviews")
+            return data
+
+        # if instance of dict
+        try:
+            if isinstance(data, dict): 
+                print("Interviews.from_dict: data is an instance of dict")
+
+                return cls(
+                    topic=data["topic"],
+                    related_subjects=data["related_subjects"].as_dict() if "related_subjects" in data else None,
+                    related_subjects_formatted=data["related_subjects_formatted"],
+                    interview_config=data["interview_config"],
+                    perspectives=data["perspectives"],
+                    conversations=data["conversations"]
+                )
+        except Exception as e:
+            print(f"Interviews.from_dict: error: {e}")
+            traceback.print_exc()
+            
+        raise ValueError(f"Interviews.from_dict:\n data: {data}")
+    
+    # to string
+    def __str__(self) -> str:
+        return f"Interviews\n\ttopic={self.topic}, \n\trelated_subjects={self.related_subjects}, \n\tperspectives={self.perspectives}, \n\tconversations={self.conversations}"
     
 
 

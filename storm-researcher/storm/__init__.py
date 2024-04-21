@@ -1,6 +1,5 @@
 import os, logging
 from datetime import datetime
-from distro import name
 from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file by default
@@ -107,6 +106,318 @@ def get_chain_question_generator(fast_llm):
 
 
 
+# ==========================================
+# ==========================================
+
+
+# Question node 
+@as_runnable
+async def node_generate_question(state: InterviewState) -> dict[str, Any]:
+    """
+    Generates a question for the editor in the interview.
+
+    Args:
+        state (InterviewState): The interview state.
+
+    Returns:
+        InterviewState: The updated interview state with the generated question added as a message.
+    """
+    editor: Editor = state.editor
+    interview_config = state.interview_config
+    fast_llm = interview_config.fast_llm
+
+    # Normalize name
+    name = cleanup_name(editor.name)
+    editor.name = name
+
+
+    logger.info(f'Generating question for {name}')
+    gn_chain = c = get_chain_question_generator(fast_llm)
+    input = {"persona": editor.persona}
+    
+    ai_response = await gn_chain.ainvoke(input)
+    
+    # Convert AI response to HumanMessage to simulate human conversation
+    tag_with_name(ai_response, name)
+    message = HumanMessage(**ai_response.dict(exclude={"type"}))
+    
+    state.messages.append(message)
+
+    logger.info(f'Generated question for {name}: {message.content}')
+    return state.as_dict()
+
+
+# Answer node
+@as_runnable
+async def node_generate_answer(state: InterviewState) -> dict[str, Any]:
+    """
+    Generates an answer for the editor's question in the interview.
+    
+    Args:
+        state (InterviewState): The interview state.
+    
+    Returns:
+        InterviewState: The updated interview state with the generated answer added as a message.
+    """
+    
+    editor: Editor = state.editor
+    config = state.interview_config
+    fast_llm = config.fast_llm
+    
+    # Chain definitions
+    gen_answer_chain = get_chain_answer(fast_llm)
+    queries_chain = get_chain_queries(fast_llm)
+    
+    # Normalize name
+    name = cleanup_name(editor.name)
+    # editor.name = name
+
+    logger.info(f'START - Generate answers for [{name}]')
+    
+    # Generate search engine queries
+    
+    q_in = {"messages": state.messages}
+    queries:Queries = await queries_chain.ainvoke(q_in)
+    logger.info(f"Got {len(queries.queries)} search engine queries for [{name}] -\n\t {queries.queries}")
+
+
+    # Run search engine on all generated queries using tool
+    query_results = await search_engine.abatch(queries.queries, config.runnable_config, return_exceptions=True)
+    successful_results = [res for res in query_results if not isinstance(res, Exception)]
+    all_query_results = {res["url"]: res["content"] for results in successful_results for res in results}
+    
+    # Dump search engine results to string and truncate to max reference length
+    dumped_successful_results = json.dumps(all_query_results)
+    # dumped_successful_results = dumped_successful_results[:config.max_reference_length] \
+    #     if config.max_reference_length is not None \
+    #     and len(dumped_successful_results) > int(config.max_reference_length) \
+    #     else dumped_successful_results
+    #     # and config.max_reference_length > 0 \
+    
+    logger.info(f"Got {len(successful_results)} search engine results for [{name}] - \n\t {all_query_results}")
+    logger.info(f"Dumped {len(dumped_successful_results)} characters for [{name}] - \n\t {dumped_successful_results}")
+
+    # # Append Questions from Wikipedia and Answers from the search engine
+    ai_message_for_queries: AIMessage = get_ai_message(json.dumps(queries.as_dict()))    
+    tool_results_message = generate_human_message(dumped_successful_results)
+    
+    logger.debug(f"QUERY_AI_MSG: {ai_message_for_queries} for [{name}]")
+    logger.debug(f"RESULTS_H_MSG: {tool_results_message} for [{name}]")
+    state.messages.append(ai_message_for_queries)
+    state.messages.append(tool_results_message)
+    
+    # Only update the shared state with the final answer to avoid polluting the dialogue history with intermediate messages
+    try:
+        generated: AnswerWithCitations = await gen_answer_chain.ainvoke(state.as_dict())
+        logger.info(f"Genreted final answer {generated} for [{name}] - \n\t {generated.as_str}")
+
+    except Exception as e:
+        logger.error(f"Error generating answer for [{name}] - {e}")
+        generated = AnswerWithCitations(answer="", cited_urls=[])
+    
+    cited_urls = set(generated.cited_urls)
+    
+    # Update references with cited references - Save the retrieved information to a the shared state for future reference
+    cited_references = {k: v for k, v in all_query_results.items() if k in cited_urls}
+    # state.references = update_references(state.references, cited_references)
+    state.references = {**state.references, **cited_references}
+    
+    
+    # # Add message to shared state
+    formatted_message = AIMessage(name=name, content=generated.as_str)
+    state.messages.append(formatted_message)
+    
+    logger.info(f'END - generate answer for [{name}]')    
+    return state.as_dict()
+
+
+# Route messages
+def node_route_messages(state_dict: dict):
+    
+    # print(f'Routing messages: {state_dict}')
+    
+    state = InterviewState.from_dict(state_dict)
+
+    editor = state.editor
+    config = state.interview_config
+    name = cleanup_name(editor.name)
+
+    print(f'Routing messages for [{name}]')
+
+    messages = state.messages
+    num_responses = len(
+        [m for m in messages if isinstance(m, AIMessage) and m.name == name]
+    )
+
+    if num_responses >= config.max_conversations:
+        print(f'Reached max number of responses for [{name}] - ResponseCount: {num_responses}')
+        return END
+    
+    last_question = messages[-2]
+    last_question_content = str(last_question.content if last_question.content else "")
+    if last_question_content.endswith("Thank you so much for your help!"):
+        print(f'Last question for [{name}] was a thank you - ResponseCount: {num_responses}')
+        return END
+    
+    print(f'Continue asking question for [{name}] as this is not the last end of the conversation - ResponseCount: {num_responses} of {config.max_conversations}')
+    return "ask_question"
+
+
+class StormInterviewGraph1:
+    def __init__(self, interview_config: InterviewConfig):
+        self.interview_config = interview_config
+        self.graph = self.build_graph()
+        
+    def build_graph(self):
+        builder = StateGraph(InterviewState)
+
+        builder.add_node("ask_question", node_generate_question)
+        builder.add_node("answer_question",node_generate_answer)
+        builder.add_conditional_edges("answer_question", node_route_messages)
+        builder.add_edge("ask_question", "answer_question")
+
+        builder.set_entry_point("ask_question")
+        return builder.compile().with_config(run_name="Conduct Interviews")
+    
+    async def run_single_interview(self, state: InterviewState) -> dict[str, Any]:
+        return await self.graph.ainvoke(state.as_dict())
+
+    
+
+    async def stream_and_return_results(self, state):
+        async for step in self.graph.astream(state):
+            name = next(iter(step))
+            print(name)
+            print(f"Processing step: {name}")
+            print("-- ", str(step[name]["messages"])[:300])
+            if END in step:
+                final_step = step
+                
+        final_state = next(iter(final_step.values()))
+        return final_state
+
+
+# ==========================================
+# ==========================================
+# Main Interviews Chain
+
+@as_runnable
+async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
+
+    topic = state.topic
+    interview_config = state.interview_config
+    fast_llm = interview_config.fast_llm
+
+    print(f"\n-- Survey Subjects for Topic: [{topic}] --\n")
+
+    # Define chains
+    expand_chain = get_chain_expand_related_topics(fast_llm=fast_llm)
+    gen_perspectives_chain = get_chain_perspective_generator(fast_llm)
+
+    # Get related topics
+    related_subjects: RelatedSubjects = await expand_chain.ainvoke({"topic": topic})
+    print(f"Related Subjects: {related_subjects.topics}")
+
+
+    retrieved_docs = await wikipedia_retriever.abatch(
+        related_subjects.topics, return_exceptions=True
+    )
+    all_docs: list[Document] = []
+
+    print(f"Retrieved {len(retrieved_docs)} wiki batches for Topic: {topic}:\n")
+    for docs in retrieved_docs:
+        if isinstance(docs, BaseException):
+            continue
+        all_docs.extend(docs)
+        
+        for doc in docs:
+            print(f"\t{doc.metadata['title']} - {doc.metadata['source']}")
+
+    print(f"Retrieved {len(all_docs)} docs for Topic: {topic}\n")
+    
+    formatted = format_docs(all_docs, max_length=500)
+
+    # Generate perspectives
+    perspectives: Perspectives = await gen_perspectives_chain.ainvoke({"examples": formatted, "topic": topic})
+    print(f"Generated {len(perspectives.editors)} perspectives for Topic: [{topic}]\n")
+
+    # Generate conversations
+    conversations = dict()
+    if perspectives is not None and perspectives.editors is not None and len(perspectives.editors) > 0:
+        for editor in perspectives.editors:
+            convo = InterviewState(interview_config=interview_config, editor=editor, messages=[], references={})
+            conversations[editor.__hash__()] = (editor, convo) 
+
+            print(f">> Generated perspective for: {editor.name} \nAffiliation: - {editor.affiliation}\nPersona: - {editor.persona}\nTopic: - {topic}\n")
+    
+    # Update state
+    state.related_subjects = related_subjects
+    state.related_subjects_formatted = formatted
+    state.perspectives = perspectives
+    state.conversations = conversations
+
+    print(f"\n-- Generated {len(perspectives.editors)} perspectives for Topic: [{topic}] --\n")
+
+    return state.as_dict()
+
+
+@as_runnable
+async def node_run_interviews(state: Interviews)-> dict[str, Any]:
+
+    # return state.as_dict()
+
+    conversations = state.conversations
+    interview_config = state.interview_config
+
+    # Define interview grapgh
+    graph = StormInterviewGraph1(interview_config)
+    interview_config.interview_graph = graph
+
+    # Run interviews
+    responses = []
+    for idx, editor_hash in enumerate(conversations.keys()):
+        editor = conversations[editor_hash][0]
+        convo = conversations[editor_hash][1]
+
+        print(f"\n\n===============\nRunning interview [{idx+1}/{len(conversations)}] for {editor.name} - {editor.persona}\n\n")
+        try:
+            response = await graph.run_single_interview(convo)
+            # responses.append((editor, response))
+
+            r = InterviewState.from_dict(response)
+            r.interview_config = interview_config
+
+            conversations[editor_hash] = (editor, r)
+            print(f"{r}")
+        except Exception as e:
+            print(f"Error running interview for {editor.name}: {e}")
+            continue
+
+        print(f"===============\nFinished interview for {editor.name} - {editor.persona}\n\n")
+
+    return state.as_dict()
+
+
+class StormGraph:
+    def __init__(self, interview_config: InterviewConfig, topic: str):
+        self.interview_config = interview_config
+        self.interviews = Interviews(interview_config=interview_config, topic=topic)
+        self.graph = self.build_graph()
+    
+    def build_graph(self):
+        builder = StateGraph(Interviews)
+
+        builder.add_node("survey_subjects", node_survey_subjects)
+        builder.add_node("run_interviews",node_run_interviews)
+
+        builder.add_edge("survey_subjects", "run_interviews")
+
+        builder.set_entry_point("survey_subjects")
+        builder.set_finish_point("run_interviews")
+        return builder.compile().with_config(run_name="Storm Researcher")
+    
+
+# ==========================================
 # ==========================================
 
 

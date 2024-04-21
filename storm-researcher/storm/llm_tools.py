@@ -115,7 +115,7 @@ def generate_human_message(human_template: str, name: str|None = None) -> HumanM
 def get_ai_message(content: str, name: str = "AI") -> AIMessage:
     return AIMessage(content=content, name=name)
 
-def tag_with_name(ai_message: AIMessage, name: str) -> AIMessage:
+def tag_with_name(ai_message: BaseMessage, name: str) -> BaseMessage:
     # Clean up name
     name = cleanup_name(name)
     
@@ -147,11 +147,11 @@ def get_chain_with_outputparser(chat_prompt: ChatPromptTemplate, llm, output_par
 # ================================================
 
 def get_wikipedia_retriever() -> WikipediaRetriever:
-    return WikipediaRetriever(load_all_available_meta=True, top_k_results=1)
+    return WikipediaRetriever(load_all_available_meta=True, top_k_results=2, doc_content_chars_max=2000)
 
 
 @tool
-async def search_engine(query: str):
+async def search_engine(query: str) -> list[dict]:
     """Search engine to the internet."""
 
     print(f"Searching DuckDuckGo for [{query}]")
