@@ -354,11 +354,11 @@ async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
     print(f"Generated {len(perspectives.editors)} perspectives for Topic: [{topic}]\n")
 
     # Generate conversations
-    conversations = dict()
+    conversations = list()
     if perspectives is not None and perspectives.editors is not None and len(perspectives.editors) > 0:
         for editor in perspectives.editors:
             convo = InterviewState(interview_config=interview_config, editor=editor, messages=[], references={})
-            conversations[editor.__hash__()] = (editor, convo) 
+            conversations.append(convo)
 
             print(f">> Generated perspective for: {editor.name} \nAffiliation: - {editor.affiliation}\nPersona: - {editor.persona}\nTopic: - {topic}\n")
     
@@ -392,11 +392,10 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
 
     # Run interviews
     responses = []
-    for idx, editor_hash in enumerate(conversations.keys()):
-        editor = conversations[editor_hash][0]
+    for idx, c in enumerate(conversations):
+        convo = InterviewState.from_dict(c) if isinstance(c, dict) else c
+        editor = convo.editor
         editor = Editor.from_dict(editor) if isinstance(editor, dict) else editor
-        convo = conversations[editor_hash][1]
-        convo = InterviewState.from_dict(convo) if isinstance(convo, dict) else convo
 
         print(f"\n\n===============\nRunning interview [{idx+1}/{len(conversations)}] for {editor.name} - {editor.persona}\n\n")
         try:
@@ -406,7 +405,7 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
             r = InterviewState.from_dict(response)
             r.interview_config = interview_config
 
-            conversations[editor_hash] = (editor, r)
+            conversations[idx] = r
             print(f"{r}")
         except Exception as e:
             print(f"Error running interview for {editor.name}: {e}")

@@ -247,9 +247,15 @@ class InterviewState:
                 if m and isinstance(m, list):
                     m1 = [dict_to_message(m1) for m1 in m]
 
+                e = data["editor"] if "editor" in data else None
+                e1: Editor = Editor.from_dict(e) if isinstance(e, dict) else e
+
+                cf = data["interview_config"] if "interview_config" in data else None
+                cf1: InterviewConfig = InterviewConfig.from_dict(cf) if isinstance(cf, dict) else cf
+
                 return cls(
-                    interview_config=data["interview_config"],
-                    editor=data["editor"],
+                    interview_config=cf1,
+                    editor=e1,
                     messages=m1,
                     references=data["references"] if "references" in data else {}
                 )
@@ -281,20 +287,23 @@ class Interviews:
     related_subjects: RelatedSubjects|None = None
     related_subjects_formatted: str|None = None
     perspectives: Perspectives|None = None
-    conversations: dict[str, tuple[Editor, InterviewState]]|None = None
+    conversations: list[InterviewState]|None = None
         
     def as_dict(self, with_config: bool = True) -> dict:
-        conversations = {}
-        for k, v in self.conversations.items() if self.conversations else {}:
-            e: Editor = v[0]
-            e1 = e.as_dict() if isinstance(e, Editor) else e
-            s: InterviewState = v[1]
-            s1 = s.as_dict() if isinstance(s, InterviewState) else s
+        conversations = []
+        for v in self.conversations if self.conversations else []:
+            print(f"Handling conversation:\n\t{v}")
+            s1 = v.as_dict() if isinstance(v, InterviewState) else v
             
-            if not with_config:
+            if not with_config and "interview_config" in s1:
                 s1["interview_config"] = None
+
+            # Check messages are converted
+            for idx, m in enumerate(s1["messages"]):
+                if isinstance(m, BaseMessage):
+                    s1["messages"][idx] = message_to_dict(m)
             
-            conversations[k] = (e1, s1)
+            conversations.append(s1)
 
 
         rs = self.related_subjects if self.related_subjects else None 
@@ -323,9 +332,9 @@ class Interviews:
             if isinstance(data, dict): 
                 print("Interviews.from_dict: data is an instance of dict")
 
-                cv = {
-                    k: (Editor.from_dict(v[0]), InterviewState.from_dict(v[1])) for k, v in data["conversations"].items()
-                } if "conversations" in data else None
+                cv = [
+                    InterviewState.from_dict(v) for v in data["conversations"]
+                ] if "conversations" in data else []
 
                 return cls(
                     topic=data["topic"],
