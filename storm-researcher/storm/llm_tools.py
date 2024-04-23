@@ -2,6 +2,7 @@ from importlib import metadata
 import os
 from typing import Type
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain import hub
 
 from langchain_community.chat_models import ChatOllama
 from langchain_anthropic import ChatAnthropic
@@ -28,13 +29,14 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from langgraph.graph import StateGraph, END
 
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableParallel, RunnablePassthrough
 
 from langchain.chains import load_summarize_chain
 
 from langchain_community.retrievers import WikipediaRetriever
 from langchain_community.utilities.duckduckgo_search import DuckDuckGoSearchAPIWrapper
 from langchain_core.tools import tool
+from numpy import where
 
 from .models import *
 from .fns import cleanup_name
@@ -177,8 +179,6 @@ async def search_engine(query: str) -> list[dict]:
     return [{"content": r["body"], "url": r["href"]} for r in results]
 
 
-
-
 @tool
 async def get_web_page_docs_from_url1(url: str, tags_to_extract=["span", "p", "h1", "h2", "h3", "div", "li", "ul", "ol", "a"]) -> list[Document]|None:
     """
@@ -315,5 +315,65 @@ def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str
 
 
 # ===========================================
+# Vectorstore tools
 # ===========================================
+
+def store_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: list[list[dict[str, str]]], 
+                              chunk_size: int = 200, chunk_overlap: int = 30) -> int:
+    
+    chunks_stored = 0
+    vectorstore = interview_config.vectorstore
+    
+    # Initialize the vectorstore if it doesn't exist
+    if vectorstore is None:
+        embeddings = interview_config.embeddings
+        if embeddings is None:
+            embeddings = get_gpt4all_embeddings()
+            interview_config.embeddings = embeddings
+        
+        vectorstore = Chroma(embedding=interview_config.embeddings, persist_directory=interview_config.vectorstore_dir)
+        interview_config.vectorstore = vectorstore
+        
+    # Recursive text splitter
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    
+    for sdoc in docs:
+        # Check if vectorstore already has this doc
+        has_doc = False
+        where_clause = {"source": sdoc[0]['url']}
+        search_res: dict[str, Any] = vectorstore.get(where=where_clause)
+        logger.info(f'Search result: {search_res}')
+        if  search_res is not None and 'ids' in search_res and len(search_res['ids']) > 0:
+            logger.info(f'Vectorstore already has doc: {where_clause} ')
+            has_doc = True
+            continue
+        
+        logger.info(f'Storing doc: {sdoc[0]["url"]} with query: {sdoc[0]["query"]}')
+        for doc in sdoc:
+            url = doc['url']
+            content = doc['content']
+            query = doc['query']
+            metadata = {
+                "source": url, 
+                "query": query
+            }
+            
+            d = Document(page_content=content, metadata=metadata)
+            
+            if not has_doc:
+                logger.debug(f'Storing doc chunk for: {url}')
+                sub_docs = text_splitter.split_documents([d])
+                vectorstore.add_documents(documents=sub_docs)
+                chunks_stored += len(sub_docs)
+        logger.info(f'Done storing doc: {sdoc[0]["url"]}')
+    
+    vectorstore.persist()
+    logger.info(f'Data stored in vector store. Chunks: {len(docs)}')
+    
+    return chunks_stored
+
+
 

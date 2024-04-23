@@ -1,5 +1,6 @@
 import os, logging
 from datetime import datetime
+import pprint
 from dotenv import load_dotenv, find_dotenv
 from pydantic import InstanceOf
 
@@ -105,6 +106,24 @@ def get_chain_question_generator(fast_llm):
     
     return gn_chain
 
+def get_qa_rag_chain(llm, embeddings, persistent_location):
+    prompt = hub.pull("rlm/rag-prompt")
+    
+    # rEFRESH VECTORSTORE
+    vectorstore = Chroma(persist_directory=persistent_location, embedding_function=embeddings)
+    retriever = vectorstore.as_retriever()
+    rag_chain_from_docs = (
+        RunnablePassthrough.assign(context=(lambda x: format_docs_basic(x["context"])))
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    rag_chain_with_source = RunnableParallel(
+        {"context": retriever, "question": RunnablePassthrough()}
+    ).assign(answer=rag_chain_from_docs)
+    
+    return rag_chain_with_source
 
 
 # ==========================================
@@ -123,6 +142,7 @@ async def node_generate_question(state: InterviewState) -> dict[str, Any]:
     Returns:
         InterviewState: The updated interview state with the generated question added as a message.
     """
+    context = state.context
     editor: Editor = state.editor
     editor = editor if isinstance(editor, Editor) else Editor.from_dict(editor)
 
@@ -133,11 +153,13 @@ async def node_generate_question(state: InterviewState) -> dict[str, Any]:
     # Normalize name
     name = cleanup_name(editor.name)
     editor.name = name
+    
+    messages = state.messages
 
 
     logger.info(f'Generating question for {name}')
     gn_chain = c = get_chain_question_generator(fast_llm)
-    input = {"persona": editor.persona}
+    input = {"persona": editor.persona, "context": context, "messages": messages}
     
     ai_response = await gn_chain.ainvoke(input)
     
@@ -166,21 +188,21 @@ async def node_generate_answer(state: InterviewState) -> dict[str, Any]:
     
     editor: Editor = state.editor
     editor = editor if isinstance(editor, Editor) else Editor.from_dict(editor)
-
-
+    name = cleanup_name(editor.name)
+    
     config = state.interview_config
     config = config if isinstance(config, InterviewConfig) else InterviewConfig.from_dict(config)
     fast_llm = config.fast_llm
+    
+    # last message from state.messages
+    last_message = state.messages[-1] if len(state.messages) > 0 else {}
+    last_message = dict_to_message(last_message)
     
     # Chain definitions
     gen_answer_chain = get_chain_answer(fast_llm)
     queries_chain = get_chain_queries(fast_llm)
     
-    # Normalize name
-    name = cleanup_name(editor.name)
-    # editor.name = name
-
-    logger.info(f'START - Generate answers for [{name}]')
+    logger.info(f'START - Generate answer for [{name}] - Question: [{last_message.content}]')
     
     # Generate search engine queries
     
@@ -189,45 +211,59 @@ async def node_generate_answer(state: InterviewState) -> dict[str, Any]:
     logger.info(f"Got {len(queries.queries)} search engine queries for [{name}] -\n\t {queries.queries}")
 
 
-    # Run search engine on all generated queries using tool
+    # Run search engine on all generated queries using tool and add to vector store
     query_results = await search_engine.abatch(queries.queries, config.runnable_config, return_exceptions=True)
-    successful_results = [res for res in query_results if not isinstance(res, Exception)]
-    all_query_results = {res["url"]: res["content"] for results in successful_results for res in results}
-    
-    # Dump search engine results to string and truncate to max reference length
-    dumped_successful_results = json.dumps(all_query_results)
-    # dumped_successful_results = dumped_successful_results[:config.max_reference_length] \
-    #     if config.max_reference_length is not None \
-    #     and len(dumped_successful_results) > int(config.max_reference_length) \
-    #     else dumped_successful_results
-    #     # and config.max_reference_length > 0 \
-    
-    logger.info(f"Got {len(successful_results)} search engine results for [{name}] - \n\t {all_query_results}")
-    logger.info(f"Dumped {len(dumped_successful_results)} characters for [{name}] - \n\t {dumped_successful_results}")
+    # pprint.pprint(f"\n\nQuery Results: \n{query_results}\n\n")
 
-    # # Append Questions from Wikipedia and Answers from the search engine
-    ai_message_for_queries: AIMessage = get_ai_message(json.dumps(queries.as_dict()))    
-    tool_results_message = generate_human_message(dumped_successful_results)
+    # zip query with results
+    for idx, q in enumerate(queries.queries):
+        if isinstance(query_results[idx], Exception):
+            logger.error(f"Error running search engine for [{name}]: {q} - {query_results[idx]}")
+        else:
+            for res in query_results[idx]:
+                res["query"] = q
     
-    logger.debug(f"QUERY_AI_MSG: {ai_message_for_queries} for [{name}]")
-    logger.debug(f"RESULTS_H_MSG: {tool_results_message} for [{name}]")
-    state.messages.append(ai_message_for_queries)
-    state.messages.append(tool_results_message)
+    successful_results = [res for res in query_results if not isinstance(res, Exception)]
     
+    stored_chunks = store_docs_to_vectorstore(logger, config, docs=successful_results)
+    logger.info(f"Got {len(successful_results)} search engine results for [{name}] - stored_chunks={stored_chunks}")
+    
+
+    # QA Chain
+    qa_chain = get_qa_rag_chain(fast_llm, config.embeddings, config.vectorstore_dir)
+    answer_raw = await qa_chain.ainvoke(last_message.content)
+    
+    logger.info(f"Got answer from QA chain for [{name}]: \n\tQuestion: {last_message.content} \n\tRaw Answer: {answer_raw}")
+    
+    # Add answer to shared state
+        
     # Only update the shared state with the final answer to avoid polluting the dialogue history with intermediate messages
     try:
-        generated: AnswerWithCitations = await gen_answer_chain.ainvoke(state.as_dict())
+        logger.info(f"Generating final answer for [{name}] - \n\t {answer_raw}")
+        answer_msg = AIMessage(name="SearchEngine", content=format_qa_response(answer_raw))
+        qa_messages:list[BaseMessage] = [last_message, answer_msg]
+        qa_state = InterviewState(
+            context=state.context,
+            interview_config=config,
+            editor=editor,
+            messages=qa_messages,
+            references=state.references)
+        
+        generated: AnswerWithCitations = await gen_answer_chain.ainvoke(qa_state.as_dict())
         logger.info(f"Genreted final answer {generated} for [{name}] - \n\t {generated.as_str}")
 
     except Exception as e:
         logger.error(f"Error generating answer for [{name}] - {e}")
+        logger.exception(traceback.format_exc())
+        
         generated = AnswerWithCitations(answer="", cited_urls=[])
     
     cited_urls = set(generated.cited_urls)
     
     # Update references with cited references - Save the retrieved information to a the shared state for future reference
-    cited_references = {k: v for k, v in all_query_results.items() if k in cited_urls}
-    # state.references = update_references(state.references, cited_references)
+    raw_answer_docs: list[Document] = answer_raw['context']
+    
+    cited_references = {doc.metadata['source']: doc.metadata['query'] if 'query' in doc.metadata else '' for doc in raw_answer_docs if doc.metadata['source'] in cited_urls}
     state.references = {**state.references, **cited_references}
     
     
@@ -357,7 +393,7 @@ async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
     conversations = list()
     if perspectives is not None and perspectives.editors is not None and len(perspectives.editors) > 0:
         for editor in perspectives.editors:
-            convo = InterviewState(interview_config=interview_config, editor=editor, messages=[], references={})
+            convo = InterviewState(context=topic,interview_config=interview_config, editor=editor, messages=[], references={})
             conversations.append(convo)
 
             print(f">> Generated perspective for: {editor.name} \nAffiliation: - {editor.affiliation}\nPersona: - {editor.persona}\nTopic: - {topic}\n")
