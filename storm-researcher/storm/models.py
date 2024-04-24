@@ -27,6 +27,13 @@ class Subsection(BaseModel):
     @property
     def as_str(self) -> str:
         return f"### {self.subsection_title}\n\n{self.description}".strip()
+    
+    def as_dict(self) -> dict:
+        return {"subsection_title": self.subsection_title, "description": self.description}
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Subsection":
+        return cls(**data)
 
 
 class Section(BaseModel):
@@ -44,6 +51,19 @@ class Section(BaseModel):
             for subsection in self.subsections or []
         )
         return f"## {self.section_title}\n\n{self.description}\n\n{subsections}".strip()
+    
+    def as_dict(self) -> dict:
+        ss = []
+        for s in self.subsections or []:
+            ss.append({"subsection_title": s.subsection_title, "description": s.description})
+        return {"section_title": self.section_title, "description": self.description, "subsections": ss}
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Section":
+        ss = []
+        for s in data["subsections"]:
+            ss.append(Subsection.from_dict(s))
+        return Section(section_title=data["section_title"], description=data["description"], subsections=ss)
 
 
 class Outline(BaseModel):
@@ -57,6 +77,22 @@ class Outline(BaseModel):
     def as_str(self) -> str:
         sections = "\n\n".join(section.as_str for section in self.sections)
         return f"# {self.page_title}\n\n{sections}".strip()
+    
+    def as_dict(self) -> dict:
+        ss = []
+        for s in self.sections:
+            if isinstance(s, Section):
+                ss.append(s.as_dict())
+            else:
+                ss.append(s)
+        return {"page_title": self.page_title, "sections": self.sections}
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Outline":
+        ss = []
+        for s in data["sections"]:
+            ss.append(Section.from_dict(s))
+        return Outline(page_title=data["page_title"], sections=ss)
 
 # ==============================================================================
 # ==============================================================================
@@ -287,6 +323,7 @@ class InterviewState:
 class Interviews:
     topic: str
     interview_config: InterviewConfig
+    outline: Outline|None = None
     related_subjects: RelatedSubjects|None = None
     related_subjects_formatted: str|None = None
     perspectives: Perspectives|None = None
@@ -314,9 +351,17 @@ class Interviews:
 
         ps = self.perspectives if self.perspectives else None
         ps1 = ps.as_dict() if isinstance(ps, Perspectives) else ps
+        
+        o = self.outline if self.outline else None
+        o1 = o.as_dict() if isinstance(o, Outline) else o
+        if o1 is not None:
+            for idx, s in enumerate(o1["sections"]):
+                if isinstance(s, Section):
+                    o1["sections"][idx] = s.as_dict()
 
         return {
             "topic": self.topic,
+            "outline": o1,
             "related_subjects": rs1,
             "related_subjects_formatted": self.related_subjects_formatted,
             "interview_config": self.interview_config if with_config else None,
@@ -328,6 +373,11 @@ class Interviews:
     def from_dict(cls, data: dict[str, Any]):
         if isinstance(data, Interviews):
             print("Interviews.from_dict: data is an instance of Interviews")
+            
+            # Make sure data is in correct format
+            data.outline = Outline.from_dict(data["outline"]) if "outline" in data else None
+            data.perspectives = Perspectives.from_dict(data["perspectives"]) if "perspectives" in data else None
+            data.related_subjects = RelatedSubjects.from_dict(data["related_subjects"]) if "related_subjects" in data else None
             return data
 
         # if instance of dict

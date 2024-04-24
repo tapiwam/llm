@@ -55,7 +55,8 @@ Please only ask one question at a time and don't ask what you have asked before.
 Your questions should be related to the context and topic you want to write.
 Be comprehensive and curious, gaining as much unique insight from the expert as possible.\
 
-Context of interest: ```{context}```
+Context of interest: 
+```{context}```
 
 
 Stay true to your specific perspective. Expert perspective:
@@ -82,7 +83,7 @@ generate_answer_system_generator = generate_system_chat_prompt("""
 You are an expert who can use information effectively. You are chatting with a Wikipedia writer who wants 
 to write a Wikipedia page on the topic you know. You have gathered the related information and will now use the information to form a response.
 
-Make your response as informative as possible and make sure every sentence is supported by the gathered information.
+Make your response as informative as possible with as many details as possible and make sure every sentence is supported by the gathered information.
 Each response must be backed up by a citation from a reliable source, formatted as a footnote, reproducing the URLS after your response.
 
 {format_instructions}

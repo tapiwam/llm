@@ -46,12 +46,12 @@ def update_editor(editor, new_editor):
 
 def format_doc(doc: Document, max_length=1000)-> str:
     related = "- ".join(doc.metadata["categories"]) if "categories" in doc.metadata else ""
-    return f"### {doc.metadata['title']}\n\nSummary: {doc.page_content}\n\nRelated\n{related}"[
+    return f"### {doc.metadata['title']}\n\nSummary: {doc.metadata['summary']}\n\nRelated\n{related}"[
         :max_length
     ]
 
 
-def format_docs(docs: List[Document], max_length=500) -> str:
+def format_docs(docs: List[Document], max_length=1000) -> str:
     return "\n\n".join(format_doc(doc, max_length=max_length) for doc in docs)
 
 def format_docs_basic(docs):
