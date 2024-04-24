@@ -95,9 +95,10 @@ You are a Wiki writer. You have gathered information from experts and search eng
 You need to make sure that the outline is comprehensive and specific. \
 Topic you are writing about: {topic} 
 
+Topic of interest: ```{topic}```
+                                                   
 Old outline:
-
-{old_outline}
+```{old_outline}```
 """)
 
 pmt_h_refine_outline = generate_human_chat_prompt("""

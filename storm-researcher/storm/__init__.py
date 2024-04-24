@@ -106,6 +106,15 @@ def get_chain_question_generator(fast_llm):
     
     return gn_chain
 
+def get_chain_refine_outline(fast_llm):
+    refine_outline_prompt = get_chat_prompt_from_prompt_templates([prompts.pmt_s_refine_outline, prompts.pmt_h_refine_outline])
+
+    outline_parser = get_pydantic_parser(pydantic_object=Outline)
+    refine_cahin = get_chain_with_outputparser(refine_outline_prompt, fast_llm, outline_parser)\
+        .with_config(run_name="Refine Outline")
+    
+    return refine_cahin
+
 def get_qa_rag_chain(llm, embeddings, persistent_location):
     prompt = hub.pull("rlm/rag-prompt")
     
@@ -457,6 +466,45 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
     return state.as_dict()
 
 
+# refine outline node
+
+
+@as_runnable
+async def node_refine_outline(state: Interviews)-> dict[str, Any]:
+    """
+    Refine the outline for each editor in the interview.
+
+    Args:
+        state (Interviews): The current interviews state.
+
+    Returns:
+        Interviews: The updated interviews state with the refined outline added as a message.
+    """
+    print(f"\n\n***\nRefining outline for {state.topic}\n***\n\n")
+
+    interview_config = state.interview_config
+
+    refine_chain = get_chain_refine_outline(interview_config.fast_llm) 
+
+    convo_str = '==========\n'
+    for convo in state.conversations or []:
+        c = ''
+        msgs = convo.messages or []
+        for msg in msgs:
+            c += f"{msg.name}: {msg.content}\n"
+        
+        convo_str += c + '\n==========\n'
+    
+    logger.info(f"Compiled Conversations:\n{convo_str}")
+
+    new_outline = await refine_chain.ainvoke({"old_outline": state.outline, "conversations": convo_str, "topic": state.topic})
+    state.outline = new_outline
+
+    logger.info(f"Refined outline:\n{state.outline}")
+
+    return state.as_dict()
+
+
 class StormGraph:
     def __init__(self, interview_config: InterviewConfig, topic: str):
         self.interview_config = interview_config
@@ -468,11 +516,13 @@ class StormGraph:
 
         builder.add_node("survey_subjects", node_survey_subjects)
         builder.add_node("run_interviews",node_run_interviews)
+        builder.add_node("refine_outline",node_refine_outline)
 
-        builder.add_edge("survey_subjects", "run_interviews")
 
         builder.set_entry_point("survey_subjects")
-        builder.set_finish_point("run_interviews")
+        builder.add_edge("survey_subjects", "run_interviews")
+        builder.add_edge("run_interviews", "refine_outline")
+        builder.set_finish_point("refine_outline")
         return builder.compile().with_config(run_name="Storm Researcher")
     
 
