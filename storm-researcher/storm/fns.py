@@ -45,7 +45,7 @@ def update_editor(editor, new_editor):
 
 
 def format_doc(doc: Document, max_length=1000)-> str:
-    related = "- ".join(doc.metadata["categories"])
+    related = "- ".join(doc.metadata["categories"]) if "categories" in doc.metadata else ""
     return f"### {doc.metadata['title']}\n\nSummary: {doc.page_content}\n\nRelated\n{related}"[
         :max_length
     ]
@@ -54,6 +54,22 @@ def format_doc(doc: Document, max_length=1000)-> str:
 def format_docs(docs: List[Document], max_length=500) -> str:
     return "\n\n".join(format_doc(doc, max_length=max_length) for doc in docs)
 
+def format_docs_basic(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+def format_qa_response(answer: dict[str, Any]) -> str:
+    context: list[Document] = answer["context"]
+    ans: str = answer["answer"]
+    
+    doc_context = ''
+    for doc in context:
+        doc_context += f"###\nSource: {doc.metadata['source']}\nQuestion: {doc.metadata['query'] if 'query' in doc.metadata else ''}\nContent: {doc.page_content}\n\n"
+    
+    resp = f"Answer: {ans}\n\n"
+    resp += f"Context: \n{doc_context}"
+    return resp
+    
+    
 
 def save_json_to_file(file_path: str, data: dict[str, Any]) -> None:
 
@@ -85,7 +101,7 @@ def message_to_dict(message: BaseMessage) -> dict[str, Any]:
     print(f"Unexpected message type: {type(message)}")
     return dict()
 
-def dict_to_message(data: dict[str, Any]) -> BaseMessage:
+def dict_to_message(data: dict[str, Any]|BaseMessage) -> BaseMessage:
     if isinstance(data, BaseMessage):
         return data
     

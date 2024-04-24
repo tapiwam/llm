@@ -52,12 +52,16 @@ Now, you are chatting with an expert to get information. Ask good questions to g
 
 When you have no more questions to ask, say "Thank you so much for your help!" to end the conversation.\
 Please only ask one question at a time and don't ask what you have asked before.\
-Your questions should be related to the topic you want to write.
+Your questions should be related to the context and topic you want to write.
 Be comprehensive and curious, gaining as much unique insight from the expert as possible.\
 
-Stay true to your specific perspective:
+Context of interest: ```{context}```
 
+
+Stay true to your specific perspective. Expert perspective:
+```
 {persona}
+```
 """)
 
 # ===========================================

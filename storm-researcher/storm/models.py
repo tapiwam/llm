@@ -194,6 +194,7 @@ class InterviewConfig:
 
 @dataclass
 class InterviewState:
+    context: str
     interview_config: InterviewConfig
     editor: Editor
     messages: list[BaseMessage] = []
@@ -224,6 +225,7 @@ class InterviewState:
                     m1.append(v)
 
         return {
+            "context": self.context,
             "interview_config": ic1,
             "editor": e1,
             "messages": self.messages,
@@ -254,6 +256,7 @@ class InterviewState:
                 cf1: InterviewConfig = InterviewConfig.from_dict(cf) if isinstance(cf, dict) else cf
 
                 return cls(
+                    context=data["context"],
                     interview_config=cf1,
                     editor=e1,
                     messages=m1,
