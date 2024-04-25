@@ -162,8 +162,8 @@ def get_chain_with_outputparser(chat_prompt: ChatPromptTemplate, llm, output_par
 # Search tools
 # ================================================
 
-def get_wikipedia_retriever() -> WikipediaRetriever:
-    return WikipediaRetriever(load_all_available_meta=True, top_k_results=2, doc_content_chars_max=2000)
+def get_wikipedia_retriever(k: int = 3, content_chars_max: int = 8000) -> WikipediaRetriever:
+    return WikipediaRetriever(load_all_available_meta=True, top_k_results=k, doc_content_chars_max=content_chars_max)
 
 
 @tool
@@ -270,7 +270,7 @@ def summarize_single_doc(llm, topic, docs: list[Document]) -> Document:
     prompt = PromptTemplate.from_template(prompt_template)
     prompt = prompt.partial(topic=topic)
     
-    text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=1500, chunk_overlap=100)
+    text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=1000, chunk_overlap=100)
     split_docs = text_splitter.split_documents(docs)
 
     refine_template = (
@@ -319,7 +319,7 @@ def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str
 # ===========================================
 
 def store_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: list[list[dict[str, str]]], 
-                              chunk_size: int = 200, chunk_overlap: int = 30) -> int:
+                              chunk_size: int = 1000, chunk_overlap: int = 0) -> int:
     
     chunks_stored = 0
     vectorstore = interview_config.vectorstore

@@ -171,3 +171,5 @@ log/
 
 slides/
 interview*.json
+data/
+**/data/**

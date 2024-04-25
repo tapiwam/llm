@@ -1,3 +1,4 @@
+from logging import config
 import os, logging
 from datetime import datetime
 import pprint
@@ -21,8 +22,6 @@ from . import prompts
 
 MAX_INTERVIEW_QUESTIONS = 3
 TAGS_TO_EXTRACT = [ "p", "h1", "h2", "h3"]
-
-wikipedia_retriever = get_wikipedia_retriever()
 
 
 # ==========================================
@@ -299,7 +298,7 @@ def node_route_messages(state_dict: dict):
 
     name = cleanup_name(editor.name)
 
-    print(f'Routing messages for [{name}]')
+    logger.info(f'Routing messages for [{name}]')
 
     messages = state.messages
     num_responses = len(
@@ -307,16 +306,16 @@ def node_route_messages(state_dict: dict):
     )
 
     if num_responses >= config.max_conversations:
-        print(f'Reached max number of responses for [{name}] - ResponseCount: {num_responses}')
+        logger.info(f'Reached max number of responses for [{name}] - ResponseCount: {num_responses}')
         return END
     
     last_question = messages[-2]
     last_question_content = str(last_question.content if last_question.content else "")
-    if last_question_content.endswith("Thank you so much for your help!"):
-        print(f'Last question for [{name}] was a thank you - ResponseCount: {num_responses}')
+    if "thank you so much" in last_question_content.lower():
+        logger.info(f'Last question for [{name}] was a thank you - ResponseCount: {num_responses}')
         return END
     
-    print(f'Continue asking question for [{name}] as this is not the last end of the conversation - ResponseCount: {num_responses} of {config.max_conversations}')
+    logger.info(f'Continue asking question for [{name}] as this is not the last end of the conversation - ResponseCount: {num_responses} of {config.max_conversations}')
     return "ask_question"
 
 
@@ -370,9 +369,18 @@ async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
     # Define chains
     expand_chain = get_chain_expand_related_topics(fast_llm=fast_llm)
     gen_perspectives_chain = get_chain_perspective_generator(fast_llm)
+    outline_chain = get_chain_outline(fast_llm)
+    wikipedia_retriever = get_wikipedia_retriever()
+    
+    # Generate initial outline
+    o_input = {"topic": topic}
+    outline: Outline = await outline_chain.ainvoke({"topic": topic})
+    print(f"Initial Outline: {outline.page_title} - {outline.sections}")
+    
+    state.outline = outline
 
     # Get related topics
-    related_subjects: RelatedSubjects = await expand_chain.ainvoke({"topic": topic})
+    related_subjects: RelatedSubjects = await expand_chain.ainvoke(o_input)
     print(f"Related Subjects: {related_subjects.topics}")
 
 
@@ -385,14 +393,16 @@ async def node_survey_subjects(state: Interviews)-> dict[str, Any]:
     for docs in retrieved_docs:
         if isinstance(docs, BaseException):
             continue
-        all_docs.extend(docs)
         
         for doc in docs:
-            print(f"\t{doc.metadata['title']} - {doc.metadata['source']}")
+            # Add summary to doc page content
+            doc.page_content = f"{doc.metadata['title']}\n\n{doc.metadata['summary']}\n\n{doc.page_content}"
+            all_docs.append(doc)
+            print(f"\tRetrieved doc: {doc.metadata['title']} - {doc.metadata['source']}")
 
     print(f"Retrieved {len(all_docs)} docs for Topic: {topic}\n")
     
-    formatted = format_docs(all_docs, max_length=500)
+    formatted = format_docs(all_docs, max_length=1000)
 
     # Generate perspectives
     perspectives: Perspectives = await gen_perspectives_chain.ainvoke({"examples": formatted, "topic": topic})
@@ -429,7 +439,7 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
     conversations = state.conversations or {}
     interview_config = state.interview_config
 
-    print(f"\n\n***\n{state.conversations}\n***\n\n")
+    # print(f"\n\n***\n{state.conversations}\n***\n\n")
 
     # Define interview grapgh
     graph = StormInterviewGraph1(interview_config)
@@ -467,8 +477,6 @@ async def node_run_interviews(state: Interviews)-> dict[str, Any]:
 
 
 # refine outline node
-
-
 @as_runnable
 async def node_refine_outline(state: Interviews)-> dict[str, Any]:
     """
@@ -504,6 +512,30 @@ async def node_refine_outline(state: Interviews)-> dict[str, Any]:
 
     return state.as_dict()
 
+# async def node_generate_outline(state: Interviews) -> dict[str, Any]:
+#     """
+#     Generates an outline for the given topic.
+
+#     Args:
+#         state (Interviews): The interviews state.
+
+#     Returns:
+#         Interviews: The updated interviews state with the generated outline added
+#     """
+#     topic = state.topic
+#     interview_config = state.interview_config
+#     interview_config = interview_config if isinstance(interview_config, InterviewConfig) else InterviewConfig.from_dict(interview_config)
+    
+#     fast_llm = interview_config.fast_llm
+    
+#     logger.info(f'Generating outline for topic {topic}')
+    
+#     outline_chain = get_chain_outline(interview_config.fast_llm)
+#     o_input = {"topic": topic}
+    
+    
+    
+    
 
 class StormGraph:
     def __init__(self, interview_config: InterviewConfig, topic: str):
