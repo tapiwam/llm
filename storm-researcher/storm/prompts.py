@@ -118,24 +118,30 @@ Conversations begining with '[CONVO]' and '[END_CONVO]':
 
 # ===========================================
 
-pmt_s_section_writer = generate_system_chat_prompt("""
-You are an expert Wikipedia writer. Complete your assigned WikiSection from the following outline:
+pmt_h_section_writer = generate_human_chat_prompt("""
+Write the full WikiSection for the `{section}` section. Include as many details as possible from the gathered information.
 
+Outline:
+```
 {outline}
+```
 
-Cite your sources, using the following references:
+Documents:
+```
 <Documents>
 {docs}
 <Documents>
+```
 
 Topic of interest: {topic}
-""")
 
-pmt_h_section_writer = generate_human_chat_prompt("""
-Write the full WikiSection for the {section} section. Include as many details as possible from the gathered information.
-
+Please return only the required results and include as many details as possible from the gathered information:
 
 {format_instructions}
+""")
+
+pmt_s_section_writer = generate_system_chat_prompt("""
+You are an expert Wikipedia writer. Complete your assigned WikiSection from the provided outline and include as many details as possible from the gathered information.
 """)
 
 # ===========================================

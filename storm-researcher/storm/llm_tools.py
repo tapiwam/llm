@@ -176,6 +176,9 @@ async def search_engine(query: str) -> list[dict]:
 
     print(f"Got search engine results: {len(results)} for [{query}]")
     
+    for r in results:    
+        print(f"- {r}")
+    
     return [{"content": r["body"], "url": r["href"]} for r in results]
 
 
@@ -318,6 +321,57 @@ def summarize_full_docs(llm, topic, docs: dict[str, list[Document]]) -> dict[str
 # Vectorstore tools
 # ===========================================
 
+def store_wiki_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: list[Document], 
+                                   chunk_size: int = 1000, chunk_overlap: int = 0) -> int:
+    
+    chunks_stored = 0
+    vectorstore = interview_config.vectorstore
+    
+    # Initialize the vectorstore if it doesn't exist
+    if vectorstore is None:
+        embeddings = interview_config.embeddings
+        if embeddings is None:
+            embeddings = get_gpt4all_embeddings()
+            interview_config.embeddings = embeddings
+        
+        vectorstore = Chroma(embedding=interview_config.embeddings, persist_directory=interview_config.vectorstore_dir)
+        interview_config.vectorstore = vectorstore
+        
+    # Recursive text splitter
+    text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap
+    )
+    
+    for sdoc in docs:
+        # Check if vectorstore already has this doc
+        has_doc = False
+        where_clause = {"source": sdoc.metadata['source']}
+        search_res: dict[str, Any] = vectorstore.get(where=where_clause)
+        logger.info(f'Search result: {search_res}')
+        if  search_res is not None and 'ids' in search_res and len(search_res['ids']) > 0:
+            logger.info(f'Vectorstore already has doc: {where_clause} ')
+            has_doc = True
+            continue
+        
+        logger.info(f'Storing doc: {sdoc.metadata["source"]}')
+    
+        if not has_doc:
+            
+            # stringify all metadata
+            for key in sdoc.metadata:
+                sdoc.metadata[key] = str(sdoc.metadata[key])
+            
+            sub_docs = text_splitter.split_documents([sdoc])
+            vectorstore.add_documents(documents=sub_docs)
+            chunks_stored += len(sub_docs)
+        logger.info(f'Done storing doc: {sdoc.metadata["source"]}')
+    
+    vectorstore.persist()
+    logger.info(f'Data stored in vector store. Chunks: {len(docs)}')
+    
+    return chunks_stored
+
 def store_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: list[list[dict[str, str]]], 
                               chunk_size: int = 1000, chunk_overlap: int = 0) -> int:
     
@@ -335,7 +389,7 @@ def store_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: l
         interview_config.vectorstore = vectorstore
         
     # Recursive text splitter
-    text_splitter = RecursiveCharacterTextSplitter(
+    text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap
     )

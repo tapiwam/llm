@@ -1,4 +1,5 @@
 from dataclasses import field
+import pprint
 import traceback
 from attr import dataclass
 from langchain_core.pydantic_v1 import BaseModel, Field
@@ -60,6 +61,9 @@ class Section(BaseModel):
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Section":
+        if isinstance(data, Section):
+            data = data.as_dict()
+        
         ss = []
         for s in data["subsections"]:
             ss.append(Subsection.from_dict(s))
@@ -89,10 +93,14 @@ class Outline(BaseModel):
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Outline":
+        if isinstance(data, Outline):
+            data = data.as_dict()
+            
         ss = []
         for s in data["sections"]:
             ss.append(Section.from_dict(s))
         return Outline(page_title=data["page_title"], sections=ss)
+    
 
 # ==============================================================================
 # ==============================================================================
@@ -108,6 +116,9 @@ class RelatedSubjects(BaseModel):
     # from dict
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RelatedSubjects":
+        if isinstance(data, RelatedSubjects):
+            data = data.as_dict()
+        
         return cls(**data)
 
 
@@ -318,96 +329,6 @@ class InterviewState:
                     message.content = message.content[-max_characters:]
                     print(f"Truncated message {i}/{len(self.messages)} to {max_characters} characters for msgName:{self.editor.name}")
             
-    
-@dataclass
-class Interviews:
-    topic: str
-    interview_config: InterviewConfig
-    outline: Outline|None = None
-    related_subjects: RelatedSubjects|None = None
-    related_subjects_formatted: str|None = None
-    perspectives: Perspectives|None = None
-    conversations: list[InterviewState]|None = None
-        
-    def as_dict(self, with_config: bool = True) -> dict:
-        conversations = []
-        for v in self.conversations if self.conversations else []:
-            print(f"Handling conversation:\n\t{v}")
-            s1 = v.as_dict() if isinstance(v, InterviewState) else v
-            
-            if not with_config and "interview_config" in s1:
-                s1["interview_config"] = None
-
-            # Check messages are converted
-            for idx, m in enumerate(s1["messages"]):
-                if isinstance(m, BaseMessage):
-                    s1["messages"][idx] = message_to_dict(m)
-            
-            conversations.append(s1)
-
-
-        rs = self.related_subjects if self.related_subjects else None 
-        rs1 = rs.as_dict() if isinstance(rs, RelatedSubjects) else rs
-
-        ps = self.perspectives if self.perspectives else None
-        ps1 = ps.as_dict() if isinstance(ps, Perspectives) else ps
-        
-        o = self.outline if self.outline else None
-        o1 = o.as_dict() if isinstance(o, Outline) else o
-        if o1 is not None:
-            for idx, s in enumerate(o1["sections"]):
-                if isinstance(s, Section):
-                    o1["sections"][idx] = s.as_dict()
-
-        return {
-            "topic": self.topic,
-            "outline": o1,
-            "related_subjects": rs1,
-            "related_subjects_formatted": self.related_subjects_formatted,
-            "interview_config": self.interview_config if with_config else None,
-            "perspectives": ps1,
-            "conversations": conversations
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]):
-        if isinstance(data, Interviews):
-            print("Interviews.from_dict: data is an instance of Interviews")
-            
-            # Make sure data is in correct format
-            data.outline = Outline.from_dict(data["outline"]) if "outline" in data else None
-            data.perspectives = Perspectives.from_dict(data["perspectives"]) if "perspectives" in data else None
-            data.related_subjects = RelatedSubjects.from_dict(data["related_subjects"]) if "related_subjects" in data else None
-            return data
-
-        # if instance of dict
-        try:
-            if isinstance(data, dict): 
-                print("Interviews.from_dict: data is an instance of dict")
-
-                cv = [
-                    InterviewState.from_dict(v) for v in data["conversations"]
-                ] if "conversations" in data else []
-
-                return cls(
-                    topic=data["topic"],
-                    related_subjects=RelatedSubjects.from_dict(data["related_subjects"]),
-                        # data["related_subjects"].as_dict() if "related_subjects" in data else None,
-                    related_subjects_formatted=data["related_subjects_formatted"],
-                    interview_config=data["interview_config"],
-                    perspectives=data["perspectives"],
-                    conversations=cv
-                )
-        except Exception as e:
-            print(f"Interviews.from_dict: error: {e}")
-            traceback.print_exc()
-            
-        raise ValueError(f"Interviews.from_dict:\n data: {data}")
-    
-    # to string
-    def __str__(self) -> str:
-        return f"Interviews\n\ttopic={self.topic}, \n\trelated_subjects={self.related_subjects}, \n\tperspectives={self.perspectives}, \n\tconversations={self.conversations}"
-    
 
 
 # ==============================================================================
@@ -444,7 +365,7 @@ class AnswerWithCitations(BaseModel):
 # ==============================================================================
 # ==============================================================================
 
-class SubSection(BaseModel):
+class WikiSubSection(BaseModel):
     subsection_title: str = Field(..., title="Title of the subsection")
     content: str = Field(
         ...,
@@ -454,39 +375,211 @@ class SubSection(BaseModel):
     @property
     def as_str(self) -> str:
         return f"### {self.subsection_title}\n\n{self.content}".strip()
+    
+    def as_dict(self) -> dict:
+        return {"subsection_title": self.subsection_title, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]):
+        if isinstance(data, WikiSubSection):
+            data = data.as_dict()
+            
+        return cls(
+            subsection_title=data["subsection_title"],
+            content=data["content"],
+        )
 
 
 class WikiSection(BaseModel):
     section_title: str = Field(..., title="Title of the section")
     content: str = Field(..., title="Full content of the section")
-    subsections: Optional[List[Subsection]] = Field(
+    subsections: Optional[List[WikiSubSection]] = Field(
         default=None,
         title="Titles and descriptions for each subsection of the Wikipedia page.",
     )
-    citations: List[str] = Field(default_factory=list)
+    citations: List[str] = Field(default_factory=list, description="Citations to the sources in the content of the section.")
 
     @property
     def as_str(self) -> str:
         subsections = "\n\n".join(
             subsection.as_str for subsection in self.subsections or []
         )
+        
+        # pretty print subsections
+        subsections = pprint.pprint(subsections)
+        
+        
         citations = "\n".join([f" [{i}] {cit}" for i, cit in enumerate(self.citations)])
         return (
             f"## {self.section_title}\n\n{self.content}\n\n{subsections}".strip()
             + f"\n\n{citations}".strip()
         )
+    
+    def as_dict(self) -> dict:
+        ss = []
+        for s in self.subsections or []:            
+            ss.append(WikiSubSection.from_dict(s).as_dict())
+
+        return {
+            "section_title": self.section_title,
+            "content": self.content,
+            "subsections": ss,
+            "citations": self.citations
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WikiSection":
+        if isinstance(data, WikiSection):
+            data = data.as_dict()
+        
+        return cls(**data)
+
 
 
 # ==============================================================================
 # ==============================================================================
 
-class ResearchState(TypedDict):
+# class ResearchState(TypedDict):
+#     topic: str
+#     outline: Outline
+#     editors: List[Editor]
+#     interview_results: List[InterviewState]
+#     # The final sections output
+#     sections: List[WikiSection]
+#     article: str
+    
+@dataclass
+class Interviews:
     topic: str
-    outline: Outline
-    editors: List[Editor]
-    interview_results: List[InterviewState]
-    # The final sections output
-    sections: List[WikiSection]
-    article: str
+    interview_config: InterviewConfig
+    outline: Outline|None = None
+    wiki_sections: list[WikiSection]| None = None
+    related_subjects: RelatedSubjects|None = None
+    related_subjects_formatted: str|None = None
+    perspectives: Perspectives|None = None
+    conversations: list[InterviewState]|None = None
+        
+    def as_dict(self, with_config: bool = True) -> dict:
+        conversations = []
+        for v in self.conversations if self.conversations else []:
+            print(f"Handling conversation:\n\t{v}")
+            s1 = v.as_dict() if isinstance(v, InterviewState) else v
+            
+            if not with_config and "interview_config" in s1:
+                s1["interview_config"] = None
+
+            # Check messages are converted
+            for idx, m in enumerate(s1["messages"]):
+                if isinstance(m, BaseMessage):
+                    s1["messages"][idx] = message_to_dict(m)
+            
+            conversations.append(s1)
+
+
+        rs = self.related_subjects if self.related_subjects else None 
+        rs1 = rs.as_dict() if isinstance(rs, RelatedSubjects) else rs
+
+        ps = self.perspectives if self.perspectives else None
+        ps1 = ps.as_dict() if isinstance(ps, Perspectives) else ps
+        
+        o = self.outline if self.outline else None
+        o1 = o.as_dict() if isinstance(o, Outline) else o
+        if o1 is not None:
+            for idx, s in enumerate(o1["sections"]):
+                if isinstance(s, Section):
+                    o1["sections"][idx] = s.as_dict()
+        
+        ws = self.wiki_sections if self.wiki_sections else None
+        ws1 = []
+        if ws:
+            for v in ws:
+                ws1.append(WikiSection.from_dict(v).as_dict())
+                
+        return {
+            "topic": self.topic,
+            "outline": o1,
+            "wiki_sections": ws1,
+            "related_subjects": rs1,
+            "related_subjects_formatted": self.related_subjects_formatted,
+            "interview_config": self.interview_config if with_config else None,
+            "perspectives": ps1,
+            "conversations": conversations
+        }
+        
+    # GetItem
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+    
+    # in
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Interviews":
+        if isinstance(data, Interviews):
+            print("Interviews.from_dict: data is an instance of Interviews")
+            
+            # Make sure data is in correct format
+            data.wiki_sections = [WikiSection.from_dict(v) for v in data["wiki_sections"]] if "wiki_sections" in data else None
+            data.outline = Outline.from_dict(data["outline"]) if "outline" in data else None
+            data.perspectives = Perspectives.from_dict(data["perspectives"]) if "perspectives" in data else None
+            data.related_subjects = RelatedSubjects.from_dict(data["related_subjects"]) if "related_subjects" in data else None
+            return data
+
+        # if instance of dict
+        try:
+            if isinstance(data, dict): 
+                print("Interviews.from_dict: data is an instance of dict")
+
+                cv = [
+                    InterviewState.from_dict(v) for v in data["conversations"]
+                ] if "conversations" in data else []
+                
+                ws = data["wiki_sections"] if "wiki_sections" in data else None
+                if ws and isinstance(ws, list):
+                    data["wiki_sections"] = [WikiSection.from_dict(v) for v in ws]
+
+                return cls(
+                    topic=data["topic"],
+                    outline=Outline.from_dict(data["outline"]),
+                    related_subjects=RelatedSubjects.from_dict(data["related_subjects"]),
+                        # data["related_subjects"].as_dict() if "related_subjects" in data else None,
+                    related_subjects_formatted=data["related_subjects_formatted"],
+                    interview_config=data["interview_config"],
+                    perspectives=data["perspectives"],
+                    conversations=cv,
+                    wiki_sections=ws
+                )
+        except Exception as e:
+            print(f"Interviews.from_dict: error: {e}")
+            traceback.print_exc()
+            
+        raise ValueError(f"Interviews.from_dict:\n data: {data}")
+    
+    # to string
+    def __str__(self) -> str:
+        return f"Interviews\n\ttopic={self.topic}, \n\trelated_subjects={self.related_subjects}, \n\tperspectives={self.perspectives}, \n\tconversations={self.conversations}"
     
 
+    def extract_conversations(self) -> str:
+        c = ''
+        
+        for convo in self.conversations or []:
+            try:
+                if isinstance(convo, dict):
+                    convo = InterviewState.from_dict(convo)
+                
+                convo.editor.description
+                
+                msgs = ''
+                for msg in convo.messages or []:
+                    if not isinstance(msg, BaseMessage):
+                        mgs = dict_to_message(msg)
+                        
+                    msgs += f"{msg.name}: {msg.content}\n"
+                
+                c += f"\n\n########\nConversation between Subject Matter Expert {convo.editor.name} - {convo.editor.description}\n{msgs}"
+            except Exception as e:
+                print(f"Error extracting conversation: {convo}\n{e}")
+                traceback.print_exc()
+        return c
