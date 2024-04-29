@@ -16,7 +16,7 @@ import json, re
 
 from prometheus_client import Summary
 
-from .fns import add_messages, update_references, update_editor, message_to_dict, dict_to_message
+from .fns import message_to_dict, dict_to_message
 
 # ==============================================================================
 # ==============================================================================
@@ -408,7 +408,6 @@ class WikiSection(BaseModel):
         # pretty print subsections
         subsections = pprint.pprint(subsections)
         
-        
         citations = "\n".join([f" [{i}] {cit}" for i, cit in enumerate(self.citations)])
         return (
             f"## {self.section_title}\n\n{self.content}\n\n{subsections}".strip()
@@ -453,6 +452,7 @@ class Interviews:
     topic: str
     interview_config: InterviewConfig
     outline: Outline|None = None
+    article: str|None = None
     wiki_sections: list[WikiSection]| None = None
     related_subjects: RelatedSubjects|None = None
     related_subjects_formatted: str|None = None
@@ -503,7 +503,8 @@ class Interviews:
             "related_subjects_formatted": self.related_subjects_formatted,
             "interview_config": self.interview_config if with_config else None,
             "perspectives": ps1,
-            "conversations": conversations
+            "conversations": conversations,
+            "article": self.article
         }
         
     # GetItem
@@ -548,7 +549,8 @@ class Interviews:
                     interview_config=data["interview_config"],
                     perspectives=data["perspectives"],
                     conversations=cv,
-                    wiki_sections=ws
+                    wiki_sections=ws,
+                    article=data["article"] if "article" in data else None
                 )
         except Exception as e:
             print(f"Interviews.from_dict: error: {e}")
@@ -558,7 +560,7 @@ class Interviews:
     
     # to string
     def __str__(self) -> str:
-        return f"Interviews\n\ttopic={self.topic}, \n\trelated_subjects={self.related_subjects}, \n\tperspectives={self.perspectives}, \n\tconversations={self.conversations}"
+        return f"Interviews\n\ttopic={self.topic}, \n\trelated_subjects={self.related_subjects}, \n\tperspectives={self.perspectives}, \n\tconversations={self.conversations}, \n\tarticle={self.article}, \n\twiki_sections={self.wiki_sections}"
     
 
     def extract_conversations(self) -> str:
@@ -583,3 +585,11 @@ class Interviews:
                 print(f"Error extracting conversation: {convo}\n{e}")
                 traceback.print_exc()
         return c
+    
+    def extract_draft(self) -> str:
+        draft = ''
+        
+        for section in self.wiki_sections or []:
+            draft += f"{section.as_str}\n\n"
+            
+        return draft.strip()

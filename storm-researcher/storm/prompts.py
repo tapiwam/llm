@@ -1,5 +1,5 @@
-from .llm_tools import generate_human_chat_prompt, generate_system_chat_prompt, generate_human_message
-from langchain_core.prompts import MessagesPlaceholder
+from .llm_core import *
+
 
 
 def generate_messages_placeholder():
@@ -147,15 +147,31 @@ You are an expert Wikipedia writer. Complete your assigned WikiSection from the 
 # ===========================================
 
 pmt_s_writer = generate_system_chat_prompt("""
-You are an expert Wikipedia author. Write the complete wiki article on {topic} using the following section drafts:
-
-{draft}
-
+You are an expert Wikipedia author. Write the complete wiki article on the provided topic using the provided notes and drafts. 
+Include as many details as possible from the gathered information.
+Organize citations using footnotes like "[1]","" avoiding duplicates in the footer. Include URLs in the footer.
 Strictly follow Wikipedia format guidelines.
 """)
 
 pmt_h_writer = generate_human_chat_prompt("""
-Write the complete Wiki article using markdown format. Organize citations using footnotes like "[1]","" avoiding duplicates in the footer. Include URLs in the footer.'
+Write the complete Wiki article using markdown format. 
+
+Topic of interest: ```{topic}```
+
+Outline:
+```
+{outline}
+```
+
+Drafts:
+```
+{draft}
+```
+
+Notes:
+```
+{notes}
+```
 """)
 
 # ===========================================

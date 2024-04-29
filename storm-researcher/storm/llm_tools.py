@@ -1,162 +1,11 @@
-from importlib import metadata
-import os
-from typing import Type
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain import hub
-
-from langchain_community.chat_models import ChatOllama
-from langchain_anthropic import ChatAnthropic
-from langchain_community.vectorstores import Chroma
-
-from langchain.prompts import PromptTemplate,ChatPromptTemplate,AIMessagePromptTemplate,SystemMessagePromptTemplate,HumanMessagePromptTemplate, BasePromptTemplate
-from langchain.schema import AIMessage, HumanMessage, SystemMessage, BaseMessage
-
-from langchain.output_parsers import PydanticOutputParser
-from langchain_core.pydantic_v1 import BaseModel
-from langchain.output_parsers import OutputFixingParser
-from langchain_core.output_parsers import StrOutputParser
-
-from langchain_core.embeddings import Embeddings
-from langchain_core.documents import Document
-from langchain_community.vectorstores import SKLearnVectorStore
-from langchain_community.embeddings import GPT4AllEmbeddings
-from langchain_community.document_loaders import AsyncChromiumLoader, AsyncHtmlLoader
-from langchain_community.document_transformers import BeautifulSoupTransformer
-
-from langchain_core.runnables import RunnableLambda, chain as as_runnable
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-from langgraph.graph import StateGraph, END
-
-from langchain_core.runnables import RunnableConfig, RunnableParallel, RunnablePassthrough
-
-from langchain.chains import load_summarize_chain
-
-from langchain_community.retrievers import WikipediaRetriever
-from langchain_community.utilities.duckduckgo_search import DuckDuckGoSearchAPIWrapper
-from langchain_core.tools import tool
-from numpy import where
-
+import tiktoken
+from .base import *
+from .fns import *
+from .llm_core import *
 from .models import *
-from .fns import cleanup_name
+from . import prompts
 
-# ================================
-# Caching
-# ================================
-from langchain.cache import InMemoryCache
-from langchain.cache import SQLiteCache
-from langchain.globals import set_llm_cache
-
-def setup_inmemory_cache():
-    set_llm_cache(InMemoryCache())
-
-def setup_sqlite_cache(db_cache_name=".langchain.db"):
-    set_llm_cache(SQLiteCache(database_path=db_cache_name))
-
-
-# ================================================
-# LLM tools
-# ================================================
-
-def get_openai_llms(regular_model: str = "gpt-3.5-turbo", long_context_model: str = "gpt-3.5-turbo") -> tuple[ChatOpenAI, ChatOpenAI]:
-    return ChatOpenAI(model=regular_model), ChatOpenAI(model=long_context_model)
-
-def get_chat_prompt_from_prompt_templates(messages: list) -> ChatPromptTemplate:
-    return ChatPromptTemplate.from_messages(messages)
-
-def get_anthropic_llms() -> tuple[ChatAnthropic, ChatAnthropic]:
-    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL")
-    ANTHROPIC_MODEL = ANTHROPIC_MODEL if ANTHROPIC_MODEL else "claude-3-haiku-20240307"
-    llm = ChatAnthropic(model_name=ANTHROPIC_MODEL)
-    return llm, llm
-
-def get_ollama_llms(regular_ollama_base_url = "http://192.168.68.99:11434", regular_model = "mistral:instruct", 
-                   long_context_ollama_base_url = "http://192.168.68.99:11434", long_context_model = "mistral:instruct"
-                   ) -> tuple[ChatOllama, ChatOllama]:
-    llm = ChatOllama(base_url=regular_ollama_base_url, 
-                    model=regular_model,
-                    temperature=0, 
-                    verbose=True)
-    
-    long_llm = ChatOllama(base_url=long_context_ollama_base_url, 
-                    model=long_context_model,
-                    temperature=0, 
-                    verbose=True)
-    
-    return llm, long_llm
-
-
-# GPT4ALL Embeddings
-def get_gpt4all_embeddings() -> Type[Embeddings]:
-    return GPT4AllEmbeddings()
-
-def get_openai_embeddings(model: str|None = None) -> Type[Embeddings]:
-    embeddings = OpenAIEmbeddings(model=model) if model else OpenAIEmbeddings()
-    return embeddings
-    
-    
-
-# ================================================
-# Vector DB
-# ================================================
-def get_inmemory_db(reference_docs, embeddings) -> SKLearnVectorStore:
-        vectorstore = SKLearnVectorStore.from_documents(
-        reference_docs,
-        embedding=embeddings,
-    )
-        
-        return vectorstore
-
-# ================================================
-# Prompt and Message tools
-# ================================================
-
-def generate_chat_prompt(system_template: str, human_template: str) -> ChatPromptTemplate:
-    
-    system_prompt = SystemMessagePromptTemplate.from_template(system_template)
-    human_prompt = HumanMessagePromptTemplate.from_template(human_template)
-    
-    return get_chat_prompt_from_prompt_templates([system_prompt, human_prompt])
-
-def generate_system_chat_prompt(system_template: str) -> SystemMessagePromptTemplate:
-    return SystemMessagePromptTemplate.from_template(system_template)
-
-def generate_human_chat_prompt(human_template: str) -> HumanMessagePromptTemplate:
-    return HumanMessagePromptTemplate.from_template(human_template)
-
-def generate_human_message(human_template: str, name: str|None = None) -> HumanMessage:
-    return HumanMessage(content=human_template, name=name)
-
-def get_ai_message(content: str, name: str = "AI") -> AIMessage:
-    return AIMessage(content=content, name=name)
-
-def tag_with_name(ai_message: BaseMessage, name: str) -> BaseMessage:
-    # Clean up name
-    name = cleanup_name(name)
-    
-    ai_message.name = name
-    return ai_message
-
-
-# ================================================
-# Output Tools
-# ================================================
-def get_pydantic_parser(pydantic_object: Type[BaseModel]) -> PydanticOutputParser:
-    return PydanticOutputParser(pydantic_object=pydantic_object)
-
-
-def get_prompt_with_outputparser_partial(promt: ChatPromptTemplate, output_parser) -> ChatPromptTemplate:
-    return promt.partial(format_instructions=output_parser.get_format_instructions())
-
-
-def get_chain_with_outputparser(chat_prompt: ChatPromptTemplate, llm, output_parser):
-    # Check chat prompt has field `format_instructions`
-    if "format_instructions" not in chat_prompt.input_variables:
-        raise ValueError(f"Chat prompt must have field `format_instructions`. Current prompt variables: {chat_prompt.input_variables}")
-    
-    fixer_parser = OutputFixingParser.from_llm(parser=output_parser, llm=llm)
-    return get_prompt_with_outputparser_partial(chat_prompt, output_parser) | llm | fixer_parser
+logger = get_logger(__name__)
 
 # ================================================
 # Search tools
@@ -430,4 +279,116 @@ def store_docs_to_vectorstore(logger, interview_config: InterviewConfig, docs: l
     return chunks_stored
 
 
+# ==========================================
+# Chains
+# ==========================================
 
+# Outline chain
+def get_chain_outline(fast_llm):
+    outline_system_prompt = prompts.outline_system_wiki_writer
+    outline_human_prompt = prompts.outline_user_topic_formatinstructions
+    direct_gen_outline_prompt = get_chat_prompt_from_prompt_templates([outline_system_prompt, outline_human_prompt])
+
+    outline_parser = get_pydantic_parser(pydantic_object=Outline)
+    return get_chain_with_outputparser(direct_gen_outline_prompt, fast_llm, outline_parser)
+
+def get_chain_expand_related_topics(fast_llm):
+    related_subjects_prompt = get_chat_prompt_from_prompt_templates([prompts.related_subjects_human_wiki_writer])
+    related_topics_parser = get_pydantic_parser(RelatedSubjects)
+    return get_chain_with_outputparser(related_subjects_prompt, fast_llm, related_topics_parser)
+
+def get_chain_perspective_generator(fast_llm):
+    perspective_prompt = get_chat_prompt_from_prompt_templates([prompts.perspective_system_generator])
+    perspective_parser = get_pydantic_parser(Perspectives)
+    return get_chain_with_outputparser(perspective_prompt, fast_llm, perspective_parser)
+
+def get_chain_queries(fast_llm):
+    gen_queries_prompt = get_chat_prompt_from_prompt_templates([prompts.gen_queries_system_generator, prompts.generate_messages_placeholder()])
+    queries_parser = get_pydantic_parser(Queries)
+    return get_chain_with_outputparser(gen_queries_prompt, fast_llm, queries_parser)
+
+
+def get_chain_answer(fast_llm):
+    gen_answer_prompt = get_chat_prompt_from_prompt_templates([prompts.generate_answer_system_generator, prompts.generate_messages_placeholder()])
+    ac_parser = get_pydantic_parser(pydantic_object=AnswerWithCitations)
+
+    return get_chain_with_outputparser(gen_answer_prompt, fast_llm, ac_parser)\
+        .with_config(run_name="GenerateAnswer")
+
+
+def get_chain_question_generator(fast_llm):
+    gen_qn_prompt = get_chat_prompt_from_prompt_templates([prompts.gen_question_system_generator, prompts.generate_messages_placeholder()])
+    
+    gn_chain = (
+            gen_qn_prompt
+            | fast_llm
+        )
+    
+    
+    return gn_chain
+
+def get_chain_refine_outline(fast_llm):
+    refine_outline_prompt = get_chat_prompt_from_prompt_templates([prompts.pmt_s_refine_outline, prompts.pmt_h_refine_outline])
+
+    outline_parser = get_pydantic_parser(pydantic_object=Outline)
+    refine_cahin = get_chain_with_outputparser(refine_outline_prompt, fast_llm, outline_parser)\
+        .with_config(run_name="Refine Outline")
+    
+    return refine_cahin
+
+def get_qa_rag_chain(llm, embeddings, persistent_location):
+    prompt = hub.pull("rlm/rag-prompt")
+    
+    # rEFRESH VECTORSTORE
+    vectorstore = Chroma(persist_directory=persistent_location, embedding_function=embeddings)
+    retriever = vectorstore.as_retriever()
+    rag_chain_from_docs = (
+        RunnablePassthrough.assign(context=(lambda x: format_docs_basic(x["context"])))
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    rag_chain_with_source = RunnableParallel(
+        {"context": retriever, "question": RunnablePassthrough()}
+    ).assign(answer=rag_chain_from_docs)
+    
+    return rag_chain_with_source
+
+
+async def retrieve_fn(inputs: dict):
+    retriever = inputs["retriever"]
+    reserach = inputs["research"]
+    docs = await retriever.ainvoke(inputs["topic"] + ": " + inputs["section"])
+    formatted = "\n".join(
+        [
+            f'<Document href="{doc.metadata["source"]}"/>\n{doc.page_content}\n</Document>'
+            for doc in docs
+        ]
+    )
+    
+    formatted = f"<Document title=\"Expert Research Notes\">\n{reserach}\n<Document>\n{formatted}"
+    return {"docs": formatted, **inputs}
+
+
+def get_section_writer_chain(long_context_llm):
+    section_writer_prompt = get_chat_prompt_from_prompt_templates([prompts.pmt_s_section_writer, prompts.pmt_h_section_writer])
+    wiki_parser = get_pydantic_parser(WikiSection)
+    fixer_parser = OutputFixingParser.from_llm(parser=wiki_parser, llm=long_context_llm)    
+    
+    section_writer = (
+        retrieve_fn
+        | section_writer_prompt.partial(format_instructions=wiki_parser.get_format_instructions())
+        | long_context_llm
+        | fixer_parser
+    )
+        
+    return section_writer
+
+def get_article_writer_chain(long_context_llm):
+    writer_prompt = get_chat_prompt_from_prompt_templates([prompts.pmt_s_writer, prompts.pmt_h_writer])
+    return writer_prompt | long_context_llm | StrOutputParser()
+
+
+
+    
